@@ -150,13 +150,16 @@ final class HomeViewModel {
     /// 设置选中的媒体
     func setSelectedMedia(image: UIImage) {
         print("[HomeViewModel] Media selected")
-        selectedMediaImage = image
         
-        // 创建草稿
+        // 1. 清除旧状态
+        selectedMediaImage = image
+        chatMessages = [] // 清空过往对话
+        
+        // 2. 创建新草稿
         currentDraft = DiaryEntry(mediaType: .photo)
         print("[HomeViewModel] Draft created: \(currentDraft?.id.uuidString ?? "nil")")
         
-        // 模拟 AI 分析后的回应
+        // 3. 模拟 AI 分析后的回应
         simulateAIResponse(delay: 1.5, text: "这张照片看起来很有故事，能多跟我说说吗？")
     }
     

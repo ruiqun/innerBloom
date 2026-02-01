@@ -164,27 +164,31 @@ struct ContentView: View {
             
             // 2. 核心主视觉 + 聊天 (整体布局)
             VStack {
-                // 顶部留白，约占 1/5 屏幕高度
+                // 顶部留白调整：往上 1/5 的位置 -> 约占屏幕高度的 10% 顶部留白，视觉重心偏上
                 Spacer()
-                    .frame(height: UIScreen.main.bounds.height * 0.15)
+                    .frame(height: UIScreen.main.bounds.height * 0.1)
                 
                 // 图片容器
                 ZStack {
                     Button(action: {
                         showPhotoPicker = true
                     }) {
-                        // 使用新的粒子化图片组件
                         ParticleImageView(image: viewModel.selectedMediaImage)
                     }
                     .buttonStyle(.plain)
                     
-                    // 聊天消息覆盖层 - 居中显示在图片内
+                    // 聊天消息覆盖层 - 完全居中在图片内
+                    // 动态计算宽度：屏幕宽度 - 左右margin - 图片内部留白
                     ChatOverlayView(messages: viewModel.chatMessages)
-                        .frame(width: 260, height: 260) // 限制在图片大小范围内
+                        .frame(
+                            width: UIScreen.main.bounds.width - 100,
+                            height: UIScreen.main.bounds.width - 100,
+                            alignment: .center
+                        )
                         .allowsHitTesting(false) // 允许点击穿透到图片
                 }
                 
-                Spacer() // 推到上方
+                Spacer() // 下方占满剩余空间，推到上方
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             

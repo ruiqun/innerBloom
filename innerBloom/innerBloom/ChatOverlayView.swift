@@ -14,16 +14,18 @@ struct ChatOverlayView: View {
     
     var body: some View {
         VStack(spacing: 8) {
-            Spacer()
+            // 移除 Spacer()，让内容自然居中
+            // Spacer() 
             
-            // 仅显示最近的几条消息，避免遮挡
+            // 仅显示最近的几条消息
             ForEach(messages.suffix(2)) { message in
                 ChatBubble(message: message)
                     .transition(.opacity.combined(with: .scale(scale: 0.9)).combined(with: .move(edge: .bottom)))
             }
         }
-        .padding(.bottom, 40) // 在图片内部稍微偏上一点，或居中
         .frame(maxWidth: 240) // 限制宽度，确保在图片圆圈内
+        // 移除底部 Padding，确保在 ZStack 中完全居中
+        // .padding(.bottom, 40)
         .animation(.spring(response: 0.4, dampingFraction: 0.7), value: messages.count)
     }
 }
@@ -41,8 +43,8 @@ struct ChatBubble: View {
             Text(message.content)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(Theme.textPrimary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
                 .background(
                     RoundedRectangle(cornerRadius: 16)
                         .fill(bubbleBackground(for: message.sender))
@@ -64,18 +66,18 @@ struct ChatBubble: View {
     private func bubbleBackground(for sender: ChatSender) -> Color {
         switch sender {
         case .user:
-            return Theme.accent.opacity(0.3) // 用户：强调色半透明，加深一点
+            return Theme.accent.opacity(0.4) // 用户：强调色半透明，加深
         case .ai:
-            return Theme.aiBubbleBackground.opacity(0.8) // AI：深色半透明，加深以提高对比度
+            return Theme.aiBubbleBackground.opacity(0.9) // AI：深色半透明，加深以提高对比度
         }
     }
     
     private func bubbleBorder(for sender: ChatSender) -> Color {
         switch sender {
         case .user:
-            return Theme.accent.opacity(0.5)
+            return Theme.accent.opacity(0.6)
         case .ai:
-            return Color.white.opacity(0.2)
+            return Color.white.opacity(0.3)
         }
     }
 }
