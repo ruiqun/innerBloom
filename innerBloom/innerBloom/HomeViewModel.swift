@@ -54,6 +54,9 @@ final class HomeViewModel {
     /// 是否正在录音
     var isRecording: Bool = false
     
+    /// 当前会话的聊天消息 (D-003)
+    var chatMessages: [ChatMessage] = []
+    
     // MARK: - 初始化
     
     init() {
@@ -107,6 +110,10 @@ final class HomeViewModel {
         currentDraft = nil
         selectedMediaImage = nil
         userInputText = ""
+        chatMessages = []
+        
+        // 模拟 AI 开场白 (可选)
+        // simulateAIResponse(delay: 0.5, text: "选一张照片，告诉我发生了什么？")
     }
     
     /// 取消创建，返回浏览模式
@@ -116,6 +123,7 @@ final class HomeViewModel {
         currentDraft = nil
         selectedMediaImage = nil
         userInputText = ""
+        chatMessages = []
     }
     
     /// 结束保存 (F-005)
@@ -132,6 +140,7 @@ final class HomeViewModel {
         currentDraft = nil
         selectedMediaImage = nil
         userInputText = ""
+        chatMessages = []
         
         print("[HomeViewModel] Save completed (placeholder)")
     }
@@ -146,6 +155,9 @@ final class HomeViewModel {
         // 创建草稿
         currentDraft = DiaryEntry(mediaType: .photo)
         print("[HomeViewModel] Draft created: \(currentDraft?.id.uuidString ?? "nil")")
+        
+        // 模拟 AI 分析后的回应
+        simulateAIResponse(delay: 1.5, text: "这张照片看起来很有故事，能多跟我说说吗？")
     }
     
     // MARK: - 语音输入 (F-011)
@@ -162,5 +174,34 @@ final class HomeViewModel {
         print("[HomeViewModel] Stop recording")
         // TODO: B-006 实现语音输入
         isRecording = false
+        
+        // 模拟录音转文字完成
+        if !userInputText.isEmpty {
+            sendMessage(userInputText)
+            userInputText = ""
+        }
+    }
+    
+    // MARK: - 聊天逻辑 (F-004)
+    
+    /// 发送用户消息
+    func sendMessage(_ text: String) {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        
+        let userMsg = ChatMessage(sender: .user, content: text)
+        chatMessages.append(userMsg)
+        print("[HomeViewModel] User sent message: \(text)")
+        
+        // 模拟 AI 回复
+        simulateAIResponse(delay: 1.0, text: "我明白了，这真的很特别。")
+    }
+    
+    /// 模拟 AI 回复
+    private func simulateAIResponse(delay: TimeInterval, text: String) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            let aiMsg = ChatMessage(sender: .ai, content: text)
+            self?.chatMessages.append(aiMsg)
+            print("[HomeViewModel] AI sent message: \(text)")
+        }
     }
 }

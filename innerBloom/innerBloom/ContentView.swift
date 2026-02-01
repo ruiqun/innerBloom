@@ -144,22 +144,7 @@ struct ContentView: View {
     
     private var creatingModeView: some View {
         ZStack {
-            // 1. 核心主视觉：居中粒子光晕 + 图片
-            VStack {
-                Spacer()
-                
-                Button(action: {
-                    showPhotoPicker = true
-                }) {
-                    ParticleRimView(image: viewModel.selectedMediaImage)
-                }
-                .buttonStyle(.plain)
-                
-                Spacer()
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            
-            // 2. 顶部控制栏
+            // 1. 顶部控制栏 (ZStack 最底层，但位置在顶部)
             VStack {
                 HStack {
                     Button(action: {
@@ -175,6 +160,33 @@ struct ContentView: View {
                 }
                 Spacer()
             }
+            .zIndex(10) // 确保返回按钮可点击
+            
+            // 2. 核心主视觉 + 聊天 (整体布局)
+            VStack {
+                // 顶部留白，约占 1/5 屏幕高度
+                Spacer()
+                    .frame(height: UIScreen.main.bounds.height * 0.15)
+                
+                // 图片容器
+                ZStack {
+                    Button(action: {
+                        showPhotoPicker = true
+                    }) {
+                        // 使用新的粒子化图片组件
+                        ParticleImageView(image: viewModel.selectedMediaImage)
+                    }
+                    .buttonStyle(.plain)
+                    
+                    // 聊天消息覆盖层 - 居中显示在图片内
+                    ChatOverlayView(messages: viewModel.chatMessages)
+                        .frame(width: 260, height: 260) // 限制在图片大小范围内
+                        .allowsHitTesting(false) // 允许点击穿透到图片
+                }
+                
+                Spacer() // 推到上方
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             
             // 3. 底部操作区 (输入 + 按钮)
             VStack(spacing: 24) {
@@ -187,6 +199,11 @@ struct ContentView: View {
                     onStartRecording: { viewModel.startRecording() },
                     onStopRecording: { viewModel.stopRecording() }
                 )
+                // 监听回车发送
+                .onSubmit {
+                    viewModel.sendMessage(viewModel.userInputText)
+                    viewModel.userInputText = ""
+                }
                 .padding(.horizontal, 24)
                 
                 // 操作按钮

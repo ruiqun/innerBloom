@@ -2,7 +2,7 @@
 //  DiaryEntry.swift
 //  innerBloom
 //
-//  日记条目数据模型 - D-001, D-002, D-005, D-006, D-009
+//  日记条目数据模型 - D-001, D-002, D-005, D-006, D-009, D-003
 //
 
 import Foundation
@@ -21,6 +21,27 @@ enum SyncStatus: String, Codable {
     case failed     // 同步失败
 }
 
+/// 聊天消息发送者
+enum ChatSender: String, Codable {
+    case user
+    case ai
+}
+
+/// 聊天消息模型 (D-003)
+struct ChatMessage: Identifiable, Codable {
+    let id: UUID
+    let sender: ChatSender
+    let content: String
+    let timestamp: Date
+    
+    init(id: UUID = UUID(), sender: ChatSender, content: String, timestamp: Date = Date()) {
+        self.id = id
+        self.sender = sender
+        self.content = content
+        self.timestamp = timestamp
+    }
+}
+
 /// 日记条目模型
 /// 对应 D-001：日记清单
 struct DiaryEntry: Identifiable {
@@ -36,6 +57,9 @@ struct DiaryEntry: Identifiable {
     
     // MARK: - 使用者输入 (D-002)
     var userInputText: String?   // 使用者输入的文字/语音转文字
+    
+    // MARK: - 聊天记录 (D-003)
+    var messages: [ChatMessage] = []
     
     // MARK: - AI 生成内容 (D-004, D-005)
     var aiAnalysisResult: String?  // AI 对媒体的分析结果
@@ -67,6 +91,7 @@ struct DiaryEntry: Identifiable {
         self.cloudMediaPath = nil
         self.thumbnailPath = nil
         self.userInputText = nil
+        self.messages = []
         self.aiAnalysisResult = nil
         self.diarySummary = nil
         self.tagIds = []
