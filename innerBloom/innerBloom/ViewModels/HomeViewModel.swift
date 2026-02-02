@@ -5,6 +5,8 @@
 //  主页视图模型 - 管理 S-001 的状态与逻辑
 //  B-003: 整合媒体选择与本机草稿保存
 //  B-004: 整合 Supabase Storage 云端上传
+//  B-008: 接入 AI 分析（F-003）
+//  B-009: 接入 AI 连续聊天（F-004）
 //
 
 import Foundation
@@ -78,6 +80,17 @@ final class HomeViewModel {
     /// 是否显示完整聊天视图 (B-007)
     var showFullChatView: Bool = false
     
+    // MARK: - AI 分析相关 (B-008)
+    
+    /// 是否正在进行 AI 分析
+    var isAnalyzing: Bool = false
+    
+    /// 当前媒体的 AI 分析结果 (D-004)
+    var currentAnalysis: AIAnalysisResult?
+    
+    /// AI 分析进度文字
+    var analysisProgressText: String = ""
+    
     // MARK: - 状态标识
     
     /// 是否正在保存媒体
@@ -105,6 +118,7 @@ final class HomeViewModel {
     private let storageService = SupabaseStorageService.shared  // B-004
     private let databaseService = SupabaseDatabaseService.shared // B-005
     private let networkMonitor = NetworkMonitor.shared          // B-004
+    private let aiService = AIService.shared                    // B-008
     
     // MARK: - 初始化
     
@@ -242,12 +256,17 @@ final class HomeViewModel {
         chatMessages = []
         isAITyping = false          // B-007
         showFullChatView = false    // B-007
+        isAnalyzing = false         // B-008
+        currentAnalysis = nil       // B-008
+        analysisProgressText = ""   // B-008
+        isSendingMessage = false    // B-009
+        pendingRetryMessage = nil   // B-009
         isSavingMedia = false
         isSavingDraft = false
         errorMessage = nil
     }
     
-    /// 结束保存 (F-005, B-004)
+    /// 结束保存 (F-005, B-004, B-008)
     func finishAndSave() {
         print("[HomeViewModel] Finish and save triggered")
         
@@ -260,12 +279,19 @@ final class HomeViewModel {
         draft.userInputText = userInputText.isEmpty ? nil : userInputText
         draft.messages = chatMessages
         draft.isSaved = true
+        
+        // B-008: 保存 AI 分析结果
+        if let analysis = currentAnalysis {
+            draft.aiAnalysisResult = analysis.description
+            draft.isAnalyzed = true
+        }
+        
         draft.touch()
         
         // 保存草稿到本机
         do {
             try draftManager.saveDraft(draft)
-            print("[HomeViewModel] Draft saved locally")
+            print("[HomeViewModel] Draft saved locally (with analysis: \(draft.isAnalyzed))")
         } catch {
             showErrorMessage("保存失败：\(error.localizedDescription)")
             return
@@ -580,21 +606,108 @@ final class HomeViewModel {
         return speechRecognizer.audioLevel
     }
     
-    // MARK: - 聊天逻辑 (F-004, B-007)
+    // MARK: - 聊天逻辑 (F-004, B-007, B-009)
     
-    /// 发送用户消息
+    /// 待重试的消息 (F-004 出错处理)
+    var pendingRetryMessage: String?
+    
+    /// 是否正在发送消息
+    var isSendingMessage: Bool = false
+    
+    /// 发送用户消息 (B-009: 真正的 AI 聊天)
     func sendMessage(_ text: String) {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard !isSendingMessage else {
+            print("[HomeViewModel] Already sending message, ignoring")
+            return
+        }
         
-        let userMsg = ChatMessage(sender: .user, content: text)
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // 添加用户消息到列表
+        let userMsg = ChatMessage(sender: .user, content: trimmedText)
         chatMessages.append(userMsg)
-        print("[HomeViewModel] User sent message: \(text)")
+        print("[HomeViewModel] User sent message: \(trimmedText)")
         
         // 更新草稿并保存到本机 (D-003)
         updateDraftMessages()
         
-        // 模拟 AI 回复（带打字指示器）
-        simulateAITypingAndResponse(text: text)
+        // 调用 AI 服务获取回复 (B-009)
+        Task { @MainActor in
+            await sendToAIService(userMessage: trimmedText)
+        }
+    }
+    
+    /// 发送消息到 AI 服务 (B-009)
+    @MainActor
+    private func sendToAIService(userMessage: String) async {
+        guard let draft = currentDraft else {
+            showErrorMessage("请先选择媒体")
+            return
+        }
+        
+        isSendingMessage = true
+        isAITyping = true
+        pendingRetryMessage = nil
+        
+        do {
+            // 调用 AI 服务
+            let response = try await aiService.chat(
+                messages: chatMessages,
+                analysisContext: currentAnalysis,
+                diaryId: draft.id
+            )
+            
+            // 添加 AI 回复
+            let aiMsg = ChatMessage(sender: .ai, content: response)
+            chatMessages.append(aiMsg)
+            
+            // 保存到本机
+            updateDraftMessages()
+            
+            print("[HomeViewModel] AI response received: \(response.prefix(50))...")
+            
+        } catch {
+            print("[HomeViewModel] AI chat failed: \(error)")
+            
+            // 保存待重试消息
+            pendingRetryMessage = userMessage
+            
+            // 显示错误（根据错误类型调整提示）
+            if let aiError = error as? AIServiceError {
+                switch aiError {
+                case .noNetwork:
+                    showErrorMessage("无网络连接，请检查网络后点击重试")
+                case .timeout:
+                    showErrorMessage("请求超时，请点击重试")
+                default:
+                    showErrorMessage("发送失败：\(aiError.localizedDescription)")
+                }
+            } else {
+                showErrorMessage("发送失败，请稍后重试")
+            }
+        }
+        
+        isSendingMessage = false
+        isAITyping = false
+    }
+    
+    /// 重试发送消息 (F-004 出错处理)
+    func retryLastMessage() {
+        guard let message = pendingRetryMessage else {
+            print("[HomeViewModel] No pending message to retry")
+            return
+        }
+        
+        print("[HomeViewModel] Retrying message: \(message)")
+        
+        // 移除之前的用户消息（避免重复）
+        if let lastUserIndex = chatMessages.lastIndex(where: { $0.sender == .user && $0.content == message }) {
+            chatMessages.remove(at: lastUserIndex)
+        }
+        
+        // 重新发送
+        sendMessage(message)
     }
     
     /// 更新草稿中的消息并保存到本机 (D-003)
@@ -615,106 +728,186 @@ final class HomeViewModel {
         }
     }
     
-    /// 模拟 AI 打字和回复 (B-007)
-    private func simulateAITypingAndResponse(text: String) {
-        // 1. 显示打字指示器
-        isAITyping = true
-        
-        // 2. 根据用户输入生成智能回复（假数据）
-        let response = generateAIResponse(for: text)
-        
-        // 3. 模拟打字延迟（根据回复长度动态调整）
-        let typingDuration = min(Double(response.count) * 0.03 + 0.8, 3.0)
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + typingDuration) { [weak self] in
-            guard let self = self else { return }
-            
-            // 隐藏打字指示器
-            self.isAITyping = false
-            
-            // 添加 AI 消息
-            let aiMsg = ChatMessage(sender: .ai, content: response)
-            self.chatMessages.append(aiMsg)
-            
-            // 保存到本机
-            self.updateDraftMessages()
-            
-            print("[HomeViewModel] AI sent message: \(response)")
-        }
-    }
-    
-    /// 生成 AI 回复（假数据，B-007）
-    private func generateAIResponse(for userInput: String) -> String {
-        let input = userInput.lowercased()
-        
-        // 根据用户输入内容匹配合适的回复
-        if input.contains("开心") || input.contains("高兴") || input.contains("快乐") {
-            return [
-                "看得出来你很开心呢！是什么让你这么高兴？",
-                "能感受到你的喜悦，这种快乐的时刻值得记录下来。",
-                "真好！快乐是会传染的，我也感到开心了。"
-            ].randomElement()!
-        }
-        
-        if input.contains("难过") || input.contains("伤心") || input.contains("哭") {
-            return [
-                "听起来你现在不太好受，想聊聊发生了什么吗？",
-                "没关系，有时候需要让情绪流出来。我在这里陪着你。",
-                "这种感觉一定很不好受，但请相信这会过去的。"
-            ].randomElement()!
-        }
-        
-        if input.contains("累") || input.contains("疲") || input.contains("辛苦") {
-            return [
-                "辛苦了，给自己一点休息的时间吧。",
-                "能感受到你的疲惫，有时候放慢脚步也很重要。",
-                "听起来你需要好好休息一下，要对自己好一点。"
-            ].randomElement()!
-        }
-        
-        if input.contains("旅行") || input.contains("出去") || input.contains("玩") {
-            return [
-                "听起来是很棒的经历！最让你印象深刻的是什么？",
-                "旅行总是能带来不一样的心情，这次有什么特别的收获吗？",
-                "好想听你多说说这次的见闻！"
-            ].randomElement()!
-        }
-        
-        if input.contains("朋友") || input.contains("家人") || input.contains("他") || input.contains("她") {
-            return [
-                "和重要的人在一起的时光总是特别珍贵呢。",
-                "听起来你们的关系很好，能多说说吗？",
-                "这样的回忆一定会成为美好的记忆。"
-            ].randomElement()!
-        }
-        
-        if input.contains("工作") || input.contains("上班") || input.contains("加班") {
-            return [
-                "工作之余也要记得照顾好自己。",
-                "辛苦了！工作固然重要，但你的健康更重要。",
-                "听起来工作挺忙的，有什么想分享的吗？"
-            ].randomElement()!
-        }
-        
-        // 默认回复池
-        return ChatMessage.aiResponses.randomElement() ?? "我明白了，这真的很特别。"
-    }
-    
-    /// 触发首次 AI 分析回应 (B-007)
+    /// 触发 AI 分析并生成欢迎消息 (B-007, B-008)
+    /// F-003: 把媒体内容交给 AI 产生「它看到了什么」的理解
     private func triggerInitialAIResponse(for mediaType: MediaType) {
-        isAITyping = true
+        guard let image = selectedMediaImage else {
+            // 没有媒体图片，使用默认欢迎消息
+            sendDefaultWelcomeMessage(for: mediaType)
+            return
+        }
         
-        // 延迟显示欢迎消息
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            guard let self = self else { return }
+        // 开始 AI 分析
+        isAnalyzing = true
+        isAITyping = true
+        analysisProgressText = "正在分析媒体内容..."
+        
+        Task { @MainActor in
+            await performAIAnalysis(image: image, mediaType: mediaType)
+        }
+    }
+    
+    /// 执行 AI 分析 (B-008)
+    @MainActor
+    private func performAIAnalysis(image: UIImage, mediaType: MediaType) async {
+        print("[HomeViewModel] Starting AI analysis for \(mediaType.rawValue)")
+        
+        do {
+            // 调用 AI 服务分析媒体
+            let analysis = try await aiService.analyzeImage(
+                image,
+                mediaType: mediaType,
+                userContext: userInputText.isEmpty ? nil : userInputText
+            )
             
-            self.isAITyping = false
+            // 保存分析结果
+            currentAnalysis = analysis
             
-            let welcomeMsg = ChatMessage.welcomeMessage(for: mediaType)
-            self.chatMessages.append(welcomeMsg)
-            self.updateDraftMessages()
+            // 更新草稿的分析结果 (D-004)
+            if var draft = currentDraft {
+                draft.aiAnalysisResult = analysis.description
+                draft.isAnalyzed = true
+                draft.touch()
+                currentDraft = draft
+                
+                // 保存到本机
+                do {
+                    try draftManager.saveDraft(draft)
+                    print("[HomeViewModel] Analysis result saved to draft")
+                } catch {
+                    print("[HomeViewModel] Failed to save analysis to draft: \(error)")
+                }
+            }
             
-            print("[HomeViewModel] AI welcome message sent")
+            // 分析完成，生成基于分析结果的欢迎消息
+            isAnalyzing = false
+            analysisProgressText = ""
+            
+            sendAnalysisBasedWelcomeMessage(analysis: analysis, mediaType: mediaType)
+            
+            print("[HomeViewModel] AI analysis completed: \(analysis.description.prefix(50))...")
+            
+        } catch {
+            // 分析失败，使用默认欢迎消息
+            print("[HomeViewModel] AI analysis failed: \(error)")
+            
+            isAnalyzing = false
+            analysisProgressText = ""
+            
+            // 记录错误到草稿
+            if var draft = currentDraft {
+                draft.lastErrorMessage = "AI 分析失败：\(error.localizedDescription)"
+                currentDraft = draft
+            }
+            
+            // 发送默认欢迎消息（降级处理）
+            sendDefaultWelcomeMessage(for: mediaType, withError: true)
+        }
+    }
+    
+    /// 发送基于 AI 分析的欢迎消息 (B-008)
+    private func sendAnalysisBasedWelcomeMessage(analysis: AIAnalysisResult, mediaType: MediaType) {
+        isAITyping = false
+        
+        // 优先使用 AI 建议的开场白
+        let content: String
+        if let opener = analysis.suggestedOpener, !opener.isEmpty {
+            content = opener
+        } else {
+            // 根据分析结果生成开场白
+            content = generateOpenerFromAnalysis(analysis, mediaType: mediaType)
+        }
+        
+        let welcomeMsg = ChatMessage(sender: .ai, content: content)
+        chatMessages.append(welcomeMsg)
+        updateDraftMessages()
+        
+        print("[HomeViewModel] AI analysis-based welcome message sent")
+    }
+    
+    /// 根据分析结果生成开场白 (B-008)
+    private func generateOpenerFromAnalysis(_ analysis: AIAnalysisResult, mediaType: MediaType) -> String {
+        // 根据检测到的情绪调整语气
+        if let mood = analysis.mood {
+            switch mood.lowercased() {
+            case "joyful", "happy", "excited":
+                return "感受到这张\(mediaType == .photo ? "照片" : "影片")里的快乐氛围了！能跟我分享一下吗？"
+            case "peaceful", "calm", "serene":
+                return "这\(mediaType == .photo ? "张照片" : "段影片")给人很宁静的感觉，是什么让你想记录这个时刻？"
+            case "nostalgic", "melancholy":
+                return "这\(mediaType == .photo ? "张照片" : "段影片")似乎有很多故事，愿意跟我聊聊吗？"
+            case "adventurous", "exciting":
+                return "看起来是一次很棒的经历！能跟我说说发生了什么吗？"
+            default:
+                break
+            }
+        }
+        
+        // 根据场景标签生成
+        if let tags = analysis.sceneTags, !tags.isEmpty {
+            if tags.contains(where: { $0.contains("旅行") || $0.contains("风景") }) {
+                return "这是旅途中的风景吗？看起来很美，能说说这趟旅程吗？"
+            }
+            if tags.contains(where: { $0.contains("朋友") || $0.contains("聚会") }) {
+                return "和朋友在一起的时光总是特别的，这是什么场合呢？"
+            }
+            if tags.contains(where: { $0.contains("美食") }) {
+                return "看起来很好吃的样子！这是在哪里享用的？"
+            }
+        }
+        
+        // 默认开场白
+        switch mediaType {
+        case .photo:
+            return "这张照片拍得很有感觉，能跟我说说背后的故事吗？"
+        case .video:
+            return "这段影片记录了什么特别的时刻呢？我很想听你分享。"
+        }
+    }
+    
+    /// 发送默认欢迎消息（当 AI 分析失败或不可用时）(B-008)
+    private func sendDefaultWelcomeMessage(for mediaType: MediaType, withError: Bool = false) {
+        isAITyping = false
+        
+        let content = ChatMessage.welcomeMessage(for: mediaType).content
+        
+        // 如果是因为错误而降级，可以稍微调整语气
+        if withError {
+            print("[HomeViewModel] Using fallback welcome message due to analysis error")
+        }
+        
+        let welcomeMsg = ChatMessage(sender: .ai, content: content)
+        chatMessages.append(welcomeMsg)
+        updateDraftMessages()
+        
+        print("[HomeViewModel] Default welcome message sent")
+    }
+    
+    /// 手动重新进行 AI 分析 (F-003 出错处理)
+    func retryAnalysis() {
+        guard let image = selectedMediaImage else {
+            showErrorMessage("没有可分析的媒体")
+            return
+        }
+        
+        print("[HomeViewModel] Retrying AI analysis")
+        
+        // 清除之前的分析结果
+        currentAnalysis = nil
+        if var draft = currentDraft {
+            draft.isAnalyzed = false
+            draft.aiAnalysisResult = nil
+            draft.lastErrorMessage = nil
+            currentDraft = draft
+        }
+        
+        // 重新开始分析
+        isAnalyzing = true
+        isAITyping = true
+        analysisProgressText = "正在重新分析..."
+        
+        Task { @MainActor in
+            await performAIAnalysis(image: image, mediaType: currentMediaType)
         }
     }
     

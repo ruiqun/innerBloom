@@ -2,9 +2,21 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!-- Supabase 配置 -->
     <key>SUPABASE_URL</key>
     <string>https://scshvfvaxcmdjiiambwr.supabase.co</string>
     <key>SUPABASE_ANON_KEY</key>
     <string>eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNjc2h2ZnZheGNtZGppaWFtYndyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk5OTcwMjQsImV4cCI6MjA4NTU3MzAyNH0.1KwRFyxy6veNz4aokkyNKjtmdR2gZ7TGVBSpUvPexKA</string>
+    
+    <!-- AI 后端配置（正式环境） -->
+    <key>AI_BACKEND_URL</key>
+    <string></string>
+    <key>AI_API_KEY</key>
+    <string></string>
+    
+    <!-- OpenAI 直接调用配置（开发模式） -->
+    <!-- ⚠️ 在此填入你的 OpenAI API Key 以启用 ChatGPT 对话 -->
+    <key>OPENAI_API_KEY</key>
+    <string></string>
 </dict>
 </plist>
