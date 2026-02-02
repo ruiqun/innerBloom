@@ -2,8 +2,8 @@
 //  SupabaseDatabaseService.swift
 //  innerBloom
 //
-//  Supabase Database 服务 - B-005, F-012
-//  负责：日记数据的 CRUD 操作、云端同步
+//  Supabase Database 服务 - B-005, F-012, B-010 (F-005)
+//  负责：日记数据的 CRUD 操作、云端同步、标签管理
 //
 
 import Foundation
@@ -269,8 +269,8 @@ final class SupabaseDatabaseService {
         request.setValue("Bearer \(config.anonKey)", forHTTPHeaderField: "Authorization")
         request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("return=representation", forHTTPHeaderField: "Prefer")
-        request.setValue("resolution=merge-duplicates", forHTTPHeaderField: "Prefer")
+        // 合并 Prefer header：返回数据 + 合并重复项
+        request.setValue("return=representation, resolution=merge-duplicates", forHTTPHeaderField: "Prefer")
         
         do {
             request.httpBody = try encoder.encode(apiModel)
@@ -284,7 +284,11 @@ final class SupabaseDatabaseService {
             throw DatabaseServiceError.requestFailed(statusCode: 0)
         }
         
+        print("[DatabaseService] Upsert response status: \(httpResponse.statusCode)")
+        
         guard (200...299).contains(httpResponse.statusCode) else {
+            let errorBody = String(data: data, encoding: .utf8) ?? "no body"
+            print("[DatabaseService] Upsert error body: \(errorBody)")
             if httpResponse.statusCode == 401 {
                 throw DatabaseServiceError.unauthorized
             }
@@ -292,15 +296,25 @@ final class SupabaseDatabaseService {
         }
         
         // 解析返回的数据
+        // 如果返回空数据但状态码是 2xx，说明操作成功但没有返回 representation
+        if data.isEmpty {
+            print("[DatabaseService] Diary upserted (no representation returned)")
+            return entry
+        }
+        
         do {
             let results = try decoder.decode([DiaryAPIModel].self, from: data)
             if let result = results.first {
                 print("[DatabaseService] Diary upserted successfully")
                 return result.toDiaryEntry(messages: entry.messages, tagIds: entry.tagIds)
             }
+            print("[DatabaseService] Diary upserted (empty array returned)")
             return entry
         } catch {
+            // 如果解码失败，打印原始数据用于调试
+            let rawString = String(data: data, encoding: .utf8) ?? "unable to decode"
             print("[DatabaseService] Decoding error: \(error)")
+            print("[DatabaseService] Raw response: \(rawString.prefix(500))")
             throw DatabaseServiceError.decodingError(error.localizedDescription)
         }
     }
@@ -416,6 +430,54 @@ final class SupabaseDatabaseService {
         print("[DatabaseService] Diary deleted successfully")
     }
     
+    /// 删除标签
+    func deleteTag(id: UUID) async throws {
+        print("[DatabaseService] Deleting tag: \(id)")
+        
+        guard config.isConfigured else {
+            throw DatabaseServiceError.notConfigured
+        }
+        
+        guard let restURL = config.restURL else {
+            throw DatabaseServiceError.invalidURL
+        }
+        
+        // 先删除 diary_tags 关联
+        var tagComponents = URLComponents(url: restURL.appendingPathComponent("diary_tags"), resolvingAgainstBaseURL: false)!
+        tagComponents.queryItems = [URLQueryItem(name: "tag_id", value: "eq.\(id.uuidString)")]
+        
+        var tagRequest = URLRequest(url: tagComponents.url!)
+        tagRequest.httpMethod = "DELETE"
+        tagRequest.setValue("Bearer \(config.anonKey)", forHTTPHeaderField: "Authorization")
+        tagRequest.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        
+        let (_, tagResponse) = try await performRequest(tagRequest)
+        
+        // 检查关联删除结果（仅打印警告，不中断流程）
+        if let tagHttpResponse = tagResponse as? HTTPURLResponse,
+           !(200...299).contains(tagHttpResponse.statusCode) {
+            print("[DatabaseService] Warning: Failed to delete tag associations (status: \(tagHttpResponse.statusCode))")
+        }
+        
+        // 删除标签本身
+        var components = URLComponents(url: restURL.appendingPathComponent("tags"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "id", value: "eq.\(id.uuidString)")]
+        
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(config.anonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        
+        let (_, response) = try await performRequest(request)
+        
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw DatabaseServiceError.requestFailed(statusCode: (response as? HTTPURLResponse)?.statusCode ?? 0)
+        }
+        
+        print("[DatabaseService] Tag deleted successfully")
+    }
+    
     // MARK: - Messages
     
     /// 保存消息
@@ -502,6 +564,82 @@ final class SupabaseDatabaseService {
     }
     
     // MARK: - Tags
+    
+    /// 根据名称查找或创建标签 (F-005)
+    func findOrCreateTag(name: String) async throws -> Tag {
+        print("[DatabaseService] Finding or creating tag: \(name)")
+        
+        guard config.isConfigured else {
+            throw DatabaseServiceError.notConfigured
+        }
+        
+        guard let restURL = config.restURL else {
+            throw DatabaseServiceError.invalidURL
+        }
+        
+        // 1. 先尝试查找已有标签
+        var searchComponents = URLComponents(url: restURL.appendingPathComponent("tags"), resolvingAgainstBaseURL: false)!
+        searchComponents.queryItems = [URLQueryItem(name: "name", value: "eq.\(name)")]
+        
+        var searchRequest = URLRequest(url: searchComponents.url!)
+        searchRequest.httpMethod = "GET"
+        searchRequest.setValue("Bearer \(config.anonKey)", forHTTPHeaderField: "Authorization")
+        searchRequest.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        
+        let (searchData, _) = try await performRequest(searchRequest)
+        let existingTags = try decoder.decode([TagAPIModel].self, from: searchData)
+        
+        if let existingTag = existingTags.first {
+            print("[DatabaseService] Found existing tag: \(existingTag.id)")
+            return existingTag.toTag()
+        }
+        
+        // 2. 不存在则创建新标签
+        print("[DatabaseService] Creating new tag: \(name)")
+        
+        let createURL = restURL.appendingPathComponent("tags")
+        
+        struct TagInsert: Codable {
+            let id: UUID
+            let name: String
+            let sort_order: Int
+            let is_system: Bool
+        }
+        
+        let newTagId = UUID()
+        let tagInsert = TagInsert(
+            id: newTagId,
+            name: name,
+            sort_order: 100, // 用户标签排在系统标签后面
+            is_system: false
+        )
+        
+        var createRequest = URLRequest(url: createURL)
+        createRequest.httpMethod = "POST"
+        createRequest.setValue("Bearer \(config.anonKey)", forHTTPHeaderField: "Authorization")
+        createRequest.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        createRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        createRequest.setValue("return=representation", forHTTPHeaderField: "Prefer")
+        
+        createRequest.httpBody = try encoder.encode(tagInsert)
+        
+        let (createData, response) = try await performRequest(createRequest)
+        
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw DatabaseServiceError.requestFailed(statusCode: (response as? HTTPURLResponse)?.statusCode ?? 0)
+        }
+        
+        let createdTags = try decoder.decode([TagAPIModel].self, from: createData)
+        
+        if let createdTag = createdTags.first {
+            print("[DatabaseService] Tag created: \(createdTag.id)")
+            return createdTag.toTag()
+        }
+        
+        // 如果创建成功但无法解析，返回本地构建的对象
+        return Tag(id: newTagId, name: name, sortOrder: 100, isSystem: false)
+    }
     
     /// 获取所有标签
     func getTags() async throws -> [Tag] {

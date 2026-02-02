@@ -15,7 +15,9 @@ struct ChatOverlayView: View {
     
     let messages: [ChatMessage]
     var isAITyping: Bool = false
+    var suggestedPrompts: [String] = []  // Best Friend Mode: 建议话题
     var onTapToExpand: (() -> Void)? = nil
+    var onSelectPrompt: ((String) -> Void)? = nil  // 点击建议话题
     
     /// 显示的最大消息数
     private let maxVisibleMessages = 3
@@ -37,18 +39,66 @@ struct ChatOverlayView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
             
+            // Best Friend Mode: 建议话题（用户卡住时显示）
+            if !suggestedPrompts.isEmpty && !isAITyping {
+                suggestedPromptsView
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+            
             // 展开提示（当有更多消息时）
             if messages.count > maxVisibleMessages {
                 expandHint
             }
         }
-        .frame(maxWidth: 260)
+        .frame(maxWidth: 280)
         .animation(.spring(response: 0.4, dampingFraction: 0.7), value: messages.count)
         .animation(.easeInOut(duration: 0.2), value: isAITyping)
+        .animation(.easeInOut(duration: 0.3), value: suggestedPrompts)
         .contentShape(Rectangle())
         .onTapGesture {
             onTapToExpand?()
         }
+    }
+    
+    /// Best Friend Mode: 建议话题视图
+    private var suggestedPromptsView: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("不知道说什么？试试这些：")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(Theme.textSecondary.opacity(0.7))
+                .padding(.leading, 4)
+            
+            FlowLayout(spacing: 6) {
+                ForEach(suggestedPrompts.prefix(3), id: \.self) { prompt in
+                    Button(action: {
+                        onSelectPrompt?(prompt)
+                    }) {
+                        Text(prompt)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(Theme.textPrimary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                Capsule()
+                                    .fill(Color.white.opacity(0.1))
+                                    .background(.ultraThinMaterial, in: Capsule())
+                            )
+                            .overlay(
+                                Capsule()
+                                    .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.black.opacity(0.3))
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+        )
     }
     
     /// 展开提示
@@ -79,7 +129,8 @@ struct ChatBubble: View {
             Text(message.content)
                 .font(.system(size: isCompact ? 13 : 15, weight: .medium))
                 .foregroundColor(Theme.textPrimary)
-                .lineLimit(isCompact ? 3 : nil)
+                .lineLimit(nil)  // 不限制行数，显示完整消息
+                .fixedSize(horizontal: false, vertical: true)  // 允许垂直扩展
                 .padding(.horizontal, isCompact ? 14 : 16)
                 .padding(.vertical, isCompact ? 10 : 12)
                 .background(
@@ -195,5 +246,59 @@ struct CompactTypingIndicator: View {
         
         ChatOverlayView(messages: ChatMessage.sampleConversation)
             .frame(width: 280, height: 280)
+    }
+}
+
+// MARK: - FlowLayout 组件
+
+/// 自适应流式布局（用于建议话题）
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+    
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let result = arrangeSubviews(proposal: proposal, subviews: subviews)
+        return result.size
+    }
+    
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let result = arrangeSubviews(proposal: proposal, subviews: subviews)
+        
+        for (index, frame) in result.frames.enumerated() {
+            subviews[index].place(
+                at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY),
+                proposal: ProposedViewSize(frame.size)
+            )
+        }
+    }
+    
+    private func arrangeSubviews(proposal: ProposedViewSize, subviews: Subviews) -> (size: CGSize, frames: [CGRect]) {
+        let maxWidth = proposal.width ?? .infinity
+        var frames: [CGRect] = []
+        var currentX: CGFloat = 0
+        var currentY: CGFloat = 0
+        var lineHeight: CGFloat = 0
+        var totalHeight: CGFloat = 0
+        var totalWidth: CGFloat = 0
+        
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            
+            if currentX + size.width > maxWidth && currentX > 0 {
+                // 换行
+                currentX = 0
+                currentY += lineHeight + spacing
+                lineHeight = 0
+            }
+            
+            frames.append(CGRect(x: currentX, y: currentY, width: size.width, height: size.height))
+            
+            lineHeight = max(lineHeight, size.height)
+            currentX += size.width + spacing
+            totalWidth = max(totalWidth, currentX - spacing)
+        }
+        
+        totalHeight = currentY + lineHeight
+        
+        return (CGSize(width: totalWidth, height: totalHeight), frames)
     }
 }

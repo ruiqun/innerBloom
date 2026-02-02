@@ -23,6 +23,9 @@ struct Theme {
     static let textPrimary = Color(white: 0.95)
     static let textSecondary = Color(white: 0.6)
     
+    /// 玻璃拟态背景
+    static let surface = Color.white.opacity(0.1)
+    
     /// AI 气泡背景色
     static let aiBubbleBackground = Color.black.opacity(0.6)
     

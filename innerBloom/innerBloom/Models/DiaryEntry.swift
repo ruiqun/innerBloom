@@ -64,6 +64,12 @@ struct DiaryEntry: Identifiable, Codable, Equatable {
     // MARK: - 使用者输入 (D-002)
     var userInputText: String?   // 使用者输入的文字/语音转文字
     
+    // MARK: - 标题 (New)
+    var title: String?
+    
+    // MARK: - 风格 (New)
+    var style: String?
+    
     // MARK: - 聊天记录 (D-003)
     var messages: [ChatMessage] = []
     
@@ -101,6 +107,8 @@ struct DiaryEntry: Identifiable, Codable, Equatable {
         self.cloudThumbnailPath = nil
         self.cloudThumbnailURL = nil
         self.userInputText = nil
+        self.title = nil
+        self.style = nil
         self.messages = []
         self.aiAnalysisResult = nil
         self.diarySummary = nil
@@ -122,6 +130,7 @@ struct DiaryEntry: Identifiable, Codable, Equatable {
         case mediaType, localMediaPath, cloudMediaPath, cloudMediaURL
         case thumbnailPath, cloudThumbnailPath, cloudThumbnailURL
         case userInputText, messages
+        case title, style
         case aiAnalysisResult, diarySummary
         case tagIds
         case isAnalyzed, isSummarized, isSaved, syncStatus, lastErrorMessage

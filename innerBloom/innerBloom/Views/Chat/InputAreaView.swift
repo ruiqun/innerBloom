@@ -15,16 +15,22 @@ struct InputAreaView: View {
     let isRecording: Bool
     var audioLevel: Float = 0.0
     var transcribingText: String = ""
+    var isSending: Bool = false
     let onStartRecording: () -> Void
     let onStopRecording: () -> Void
+    var onSend: (() -> Void)? = nil  // 发送消息回调
+    
+    @FocusState private var isTextFieldFocused: Bool
     
     private let maxCharacters = 500
     
-    // 波形动画状态
-    @State private var wavePhase: CGFloat = 0
+    /// 是否可以发送（有文字或正在录音）
+    private var canSend: Bool {
+        !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isRecording && !isSending
+    }
     
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 12) {
             // 录音状态提示
             if isRecording {
                 recordingIndicator
@@ -32,16 +38,19 @@ struct InputAreaView: View {
             }
             
             // 输入框容器
-            HStack(alignment: .bottom, spacing: 16) {
+            HStack(alignment: .center, spacing: 12) {
                 // 语音按钮 (独立悬浮感)
                 voiceButton
                 
                 // 文字输入框 (Glassmorphism)
                 textInputField
+                
+                // 发送按钮
+                sendButton
             }
             
-            // 字数统计 (极简)
-            if !inputText.isEmpty && !isRecording {
+            // 字数统计 (极简) - 键盘弹出时显示
+            if !inputText.isEmpty && !isRecording && isTextFieldFocused {
                 HStack {
                     Spacer()
                     Text("\(inputText.count)/\(maxCharacters)")
@@ -49,9 +58,11 @@ struct InputAreaView: View {
                         .foregroundColor(Theme.textSecondary)
                 }
                 .padding(.horizontal, 4)
+                .transition(.opacity)
             }
         }
         .animation(.easeInOut(duration: 0.2), value: isRecording)
+        .animation(.easeInOut(duration: 0.15), value: isTextFieldFocused)
     }
     
     // MARK: - 录音状态指示器
@@ -150,20 +161,58 @@ struct InputAreaView: View {
             }
             .textFieldStyle(.plain)
             .foregroundColor(Theme.textPrimary)
+            .focused($isTextFieldFocused)
             .lineLimit(1...4)
-            .padding(16)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
             .background(
                 RoundedRectangle(cornerRadius: 20)
                     .fill(Theme.glassMaterial)
                     .overlay(
                         RoundedRectangle(cornerRadius: 20)
                             .stroke(
-                                isRecording ? Color.red.opacity(0.3) : Color.white.opacity(0.1),
-                                lineWidth: isRecording ? 1 : 0.5
+                                isTextFieldFocused ? Theme.accent.opacity(0.5) :
+                                    (isRecording ? Color.red.opacity(0.3) : Color.white.opacity(0.1)),
+                                lineWidth: isTextFieldFocused ? 1.5 : (isRecording ? 1 : 0.5)
                             )
                     )
             )
             .disabled(isRecording) // 录音时禁用手动输入
+            .onSubmit {
+                if canSend {
+                    onSend?()
+                }
+            }
+    }
+    
+    // MARK: - 发送按钮
+    
+    private var sendButton: some View {
+        Button(action: {
+            let impact = UIImpactFeedbackGenerator(style: .light)
+            impact.impactOccurred()
+            onSend?()
+        }) {
+            ZStack {
+                Circle()
+                    .fill(canSend ? Theme.accent : Color.white.opacity(0.05))
+                    .frame(width: 40, height: 40)
+                
+                if isSending {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                        .tint(canSend ? .black : Theme.textSecondary)
+                } else {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(canSend ? .black : Theme.textSecondary.opacity(0.5))
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(!canSend)
+        .scaleEffect(canSend ? 1.0 : 0.9)
+        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: canSend)
     }
 }
 
@@ -285,29 +334,59 @@ extension View {
 #Preview("默认状态") {
     ZStack {
         Theme.background.ignoresSafeArea()
-        InputAreaView(
-            inputText: .constant(""),
-            isRecording: false,
-            audioLevel: 0,
-            transcribingText: "",
-            onStartRecording: {},
-            onStopRecording: {}
-        )
-        .padding()
+        VStack {
+            Spacer()
+            InputAreaView(
+                inputText: .constant(""),
+                isRecording: false,
+                audioLevel: 0,
+                transcribingText: "",
+                isSending: false,
+                onStartRecording: {},
+                onStopRecording: {},
+                onSend: {}
+            )
+            .padding()
+        }
+    }
+}
+
+#Preview("有文字") {
+    ZStack {
+        Theme.background.ignoresSafeArea()
+        VStack {
+            Spacer()
+            InputAreaView(
+                inputText: .constant("今天天气真好"),
+                isRecording: false,
+                audioLevel: 0,
+                transcribingText: "",
+                isSending: false,
+                onStartRecording: {},
+                onStopRecording: {},
+                onSend: {}
+            )
+            .padding()
+        }
     }
 }
 
 #Preview("录音中") {
     ZStack {
         Theme.background.ignoresSafeArea()
-        InputAreaView(
-            inputText: .constant("今天去了海边"),
-            isRecording: true,
-            audioLevel: 0.5,
-            transcribingText: "今天去了海边",
-            onStartRecording: {},
-            onStopRecording: {}
-        )
-        .padding()
+        VStack {
+            Spacer()
+            InputAreaView(
+                inputText: .constant("今天去了海边"),
+                isRecording: true,
+                audioLevel: 0.5,
+                transcribingText: "今天去了海边",
+                isSending: false,
+                onStartRecording: {},
+                onStopRecording: {},
+                onSend: {}
+            )
+            .padding()
+        }
     }
 }

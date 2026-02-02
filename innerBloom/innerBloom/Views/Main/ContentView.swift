@@ -15,7 +15,7 @@ struct ContentView: View {
     
     // MARK: - Properties
     
-    @State private var viewModel = HomeViewModel()
+    @Bindable private var viewModel = HomeViewModel.shared
     @State private var showPhotoPicker = false
     @State private var selectedPhotoItem: PhotosPickerItem?
     
@@ -38,8 +38,8 @@ struct ContentView: View {
                 }
             }
             
-            // 保存中/上传中遮罩 (B-004)
-            if viewModel.isSavingMedia || viewModel.isUploading {
+            // 保存中/上传中/生成中遮罩 (B-004, F-005)
+            if viewModel.isSavingMedia || viewModel.isUploading || viewModel.isGenerating {
                 savingOverlay
             }
         }
@@ -66,6 +66,10 @@ struct ContentView: View {
             set: { viewModel.showFullChatView = $0 }
         )) {
             fullChatSheet
+        }
+        // 日记详情视图 (B-012)
+        .fullScreenCover(item: $viewModel.selectedDiary) { entry in
+            diaryDetailCover(entry: entry)
         }
         // 隐藏默认 NavigationBar，使用自定义布局
         .navigationBarHidden(true)
@@ -98,7 +102,21 @@ struct ContentView: View {
         .presentationDragIndicator(.visible)
     }
     
-    // MARK: - 保存中/上传中遮罩 (B-004)
+    // MARK: - 日记详情视图 FullScreenCover (B-012)
+    
+    private func diaryDetailCover(entry: DiaryEntry) -> some View {
+        DiaryDetailView(
+            entry: entry,
+            onTagSelected: { tag in
+                viewModel.selectTagFromDetail(tag)
+            },
+            onDelete: {
+                viewModel.deleteDiary(entry)
+            }
+        )
+    }
+    
+    // MARK: - 保存中/上传中/生成中遮罩 (B-004, F-005)
     
     private var savingOverlay: some View {
         ZStack {
@@ -106,13 +124,26 @@ struct ContentView: View {
                 .ignoresSafeArea()
             
             VStack(spacing: 16) {
-                ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: Theme.accent))
-                    .scaleEffect(1.5)
+                // F-005: 根据状态显示不同图标
+                ZStack {
+                    if viewModel.isGenerating {
+                        // AI 生成中显示闪烁的 AI 图标
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 32))
+                            .foregroundColor(Theme.accent)
+                            .symbolEffect(.pulse)
+                    } else {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: Theme.accent))
+                            .scaleEffect(1.5)
+                    }
+                }
+                .frame(height: 40)
                 
                 Text(overlayStatusText)
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(Theme.textSecondary)
+                    .multilineTextAlignment(.center)
             }
             .padding(32)
             .background(
@@ -124,7 +155,10 @@ struct ContentView: View {
     
     /// 遮罩状态文字
     private var overlayStatusText: String {
-        if viewModel.isUploading {
+        // F-005: AI 生成进度优先显示
+        if viewModel.isGenerating {
+            return viewModel.generationProgressText.isEmpty ? "正在生成..." : viewModel.generationProgressText
+        } else if viewModel.isUploading {
             return viewModel.uploadProgressText.isEmpty ? "正在上传..." : viewModel.uploadProgressText
         } else if viewModel.isSavingMedia {
             return "保存中..."
@@ -174,6 +208,7 @@ struct ContentView: View {
                     isLoading: viewModel.isLoading,
                     onTapEntry: { entry in
                         // Detail
+                        viewModel.showDiaryDetail(entry)
                     }
                 )
                 .padding(.top, 16)
@@ -229,30 +264,16 @@ struct ContentView: View {
             let screenWidth = geometry.size.width
             let screenHeight = geometry.size.height
             
-            ZStack {
-                // 1. 顶部控制栏 (ZStack 最底层，但位置在顶部)
+            VStack(spacing: 0) {
+                // 1. 核心主视觉 + 聊天 (整体布局)
                 VStack {
-                    HStack {
-                        Button(action: {
-                            withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
-                                viewModel.cancelCreating()
-                            }
-                        }) {
-                            Image(systemName: "chevron.left")
-                                .foregroundColor(Theme.textSecondary)
-                                .padding()
-                        }
-                        Spacer()
-                    }
+                    // 顶部留白
                     Spacer()
-                }
-                .zIndex(10) // 确保返回按钮可点击
-                
-                // 2. 核心主视觉 + 聊天 (整体布局)
-                VStack {
-                    // 顶部留白调整：往上 1/5 的位置 -> 约占屏幕高度的 10% 顶部留白，视觉重心偏上
-                    Spacer()
-                        .frame(height: screenHeight * 0.1)
+                        .frame(height: screenHeight * 0.08)
+                    
+                    // 风格选择器
+                    StyleSelectorView(selectedStyle: $viewModel.selectedStyle)
+                        .padding(.bottom, 16)
                     
                     // 图片容器
                     ZStack {
@@ -264,12 +285,15 @@ struct ContentView: View {
                         .buttonStyle(.plain)
                         
                         // 聊天消息覆盖层 - 完全居中在图片内 (B-007)
-                        // 动态计算宽度：屏幕宽度 - 左右margin - 图片内部留白
                         ChatOverlayView(
                             messages: viewModel.chatMessages,
                             isAITyping: viewModel.isAITyping,
+                            suggestedPrompts: viewModel.suggestedPrompts,
                             onTapToExpand: {
                                 viewModel.toggleFullChatView()
+                            },
+                            onSelectPrompt: { prompt in
+                                viewModel.sendMessage(prompt)
                             }
                         )
                         .frame(
@@ -277,51 +301,63 @@ struct ContentView: View {
                             height: screenWidth - 100,
                             alignment: .center
                         )
-                        .allowsHitTesting(viewModel.chatMessages.count > 0) // 有消息时可点击展开
+                        .allowsHitTesting(viewModel.chatMessages.count > 0)
                     }
                     
-                    Spacer() // 下方占满剩余空间，推到上方
+                    Spacer()
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            
-            // 3. 底部操作区 (输入 + 按钮)
-            VStack(spacing: 24) {
-                Spacer()
+                .frame(maxWidth: .infinity)
                 
-                // 输入区 (B-006: 集成语音输入)
-                InputAreaView(
-                    inputText: $viewModel.userInputText,
-                    isRecording: viewModel.isRecording,
-                    audioLevel: viewModel.audioLevel,
-                    transcribingText: viewModel.transcribingText,
-                    onStartRecording: { viewModel.startRecording() },
-                    onStopRecording: { viewModel.stopRecording() }
-                )
-                // 监听回车发送
-                .onSubmit {
-                    viewModel.sendMessage(viewModel.userInputText)
-                    viewModel.userInputText = ""
-                }
-                .padding(.horizontal, 24)
-                
-                // 操作按钮
-                ActionButtonsView(
-                    onCancel: {
-                        withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
-                            viewModel.cancelCreating()
+                // 2. 底部操作区 (输入 + 按钮)
+                VStack(spacing: 16) {
+                    // 输入区 (带发送按钮)
+                    InputAreaView(
+                        inputText: $viewModel.userInputText,
+                        isRecording: viewModel.isRecording,
+                        audioLevel: viewModel.audioLevel,
+                        transcribingText: viewModel.transcribingText,
+                        isSending: viewModel.isSendingMessage,
+                        onStartRecording: { viewModel.startRecording() },
+                        onStopRecording: { viewModel.stopRecording() },
+                        onSend: {
+                            let text = viewModel.userInputText.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if !text.isEmpty {
+                                viewModel.sendMessage(text)
+                                viewModel.userInputText = ""
+                            }
                         }
-                    },
-                    onFinishSave: {
-                        viewModel.finishAndSave()
-                    },
-                    canSave: viewModel.selectedMediaImage != nil,
-                    isSaving: false
-                )
-                .padding(.horizontal, 24)
-                .padding(.bottom, 40)
+                    )
+                    .padding(.horizontal, 20)
+                    
+                    // 操作按钮（返回 + Save Memory）
+                    ActionButtonsView(
+                        onBack: {
+                            withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                                viewModel.cancelCreating()
+                            }
+                        },
+                        onSaveMemory: {
+                            viewModel.finishAndSave()
+                        },
+                        canSave: viewModel.selectedMediaImage != nil && viewModel.chatMessages.count > 0,
+                        isSaving: viewModel.isSavingMedia || viewModel.isGenerating
+                    )
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 24)
                 }
+                .background(
+                    // 底部区域背景渐变，与主背景融合
+                    LinearGradient(
+                        colors: [Theme.background.opacity(0), Theme.background],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: 40)
+                    .offset(y: -40),
+                    alignment: .top
+                )
             }
-            .background(Theme.background) // 确保覆盖
+            .background(Theme.background)
             // 手势支持
             .gesture(
                 DragGesture(minimumDistance: 50)

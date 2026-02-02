@@ -111,6 +111,11 @@ final class LocalMediaManager {
     
     // MARK: - Public Methods
     
+    /// 获取 Documents 目录 URL
+    func getDocumentsDirectory() -> URL {
+        documentsURL
+    }
+    
     /// 保存图片到本机
     /// - Parameters:
     ///   - image: UIImage 对象

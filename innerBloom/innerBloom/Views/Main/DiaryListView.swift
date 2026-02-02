@@ -95,11 +95,18 @@ struct DiaryListItemView: View {
                     .font(.caption)
                     .foregroundColor(Theme.textSecondary)
                 
+                if let title = entry.title {
+                    Text(title)
+                        .font(.headline)
+                        .foregroundColor(Theme.textPrimary)
+                        .lineLimit(1)
+                }
+                
                 if let summary = entry.displaySummary {
                     Text(summary)
                         .font(.subheadline)
                         .lineLimit(2)
-                        .foregroundColor(Theme.textPrimary)
+                        .foregroundColor(entry.title == nil ? Theme.textPrimary : Theme.textSecondary)
                 } else {
                     Text("无内容")
                         .font(.subheadline)
@@ -126,14 +133,43 @@ struct DiaryListItemView: View {
     
     private var thumbnailView: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(0.1))
-            
-            Image(systemName: entry.mediaType == .photo ? "photo" : "video")
-                .font(.title3)
-                .foregroundColor(Theme.textSecondary)
+            if let image = loadThumbnail() {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 56, height: 56)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+            } else {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.white.opacity(0.1))
+                    .frame(width: 56, height: 56)
+                    .overlay(
+                        Image(systemName: entry.mediaType == .photo ? "photo" : "video")
+                            .font(.title3)
+                            .foregroundColor(Theme.textSecondary)
+                    )
+            }
         }
-        .frame(width: 56, height: 56)
+    }
+    
+    private func loadThumbnail() -> UIImage? {
+        // 1. 尝试加载本地缩略图
+        if let thumbPath = entry.thumbnailPath {
+            let fullPath = LocalMediaManager.shared.getDocumentsDirectory().appendingPathComponent(thumbPath).path
+            if let image = UIImage(contentsOfFile: fullPath) {
+                return image
+            }
+        }
+        
+        // 2. 尝试加载本地原图
+        if let path = entry.localMediaPath {
+            let fullPath = LocalMediaManager.shared.getDocumentsDirectory().appendingPathComponent(path).path
+            if let image = UIImage(contentsOfFile: fullPath) {
+                return image
+            }
+        }
+        
+        return nil
     }
 }
 

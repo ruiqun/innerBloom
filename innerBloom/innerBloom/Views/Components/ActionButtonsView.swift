@@ -10,22 +10,22 @@ import SwiftUI
 
 struct ActionButtonsView: View {
     
-    let onCancel: () -> Void
-    let onFinishSave: () -> Void
+    let onBack: () -> Void
+    let onSaveMemory: () -> Void
     let canSave: Bool
     let isSaving: Bool
     
     var body: some View {
-        HStack(spacing: 24) {
-            // 取消按钮 (极简文字，低调)
-            Button(action: onCancel) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 20, weight: .light))
+        HStack(spacing: 16) {
+            // 返回按钮 (chevron.left 图标)
+            Button(action: onBack) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 18, weight: .medium))
                     .foregroundColor(Theme.textSecondary)
-                    .frame(width: 50, height: 50)
+                    .frame(width: 44, height: 44)
                     .background(
                         Circle()
-                            .fill(Color.white.opacity(0.05))
+                            .fill(Color.white.opacity(0.08))
                     )
             }
             .buttonStyle(.plain)
@@ -33,61 +33,65 @@ struct ActionButtonsView: View {
             
             Spacer()
             
-            // 结束保存按钮 (强调色 + 柔光 + 同心圆环)
-            Button(action: onFinishSave) {
-                ZStack {
-                    // 外发光晕
-                    if canSave {
-                        Circle()
-                            .fill(Theme.accent.opacity(0.2))
-                            .frame(width: 70, height: 70)
-                            .blur(radius: 10)
+            // Save Memory 按钮 (强调色胶囊按钮)
+            Button(action: onSaveMemory) {
+                HStack(spacing: 8) {
+                    if isSaving {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                            .tint(.black)
+                    } else {
+                        Image(systemName: "heart.fill")
+                            .font(.system(size: 14, weight: .medium))
+                        Text("Save Memory")
+                            .font(.system(size: 14, weight: .semibold))
                     }
-                    
-                    // 同心圆环装饰
-                    Circle()
-                        .stroke(Theme.accent.opacity(0.3), lineWidth: 1)
-                        .frame(width: 64, height: 64)
-                        .scaleEffect(isSaving ? 1.1 : 1.0)
-                        .opacity(isSaving ? 0 : 1)
-                        .animation(isSaving ? .easeOut(duration: 1).repeatForever(autoreverses: false) : .default, value: isSaving)
-                    
-                    // 主按钮实体
-                    Circle()
-                        .fill(canSave ? Theme.accent : Color.white.opacity(0.1))
-                        .frame(width: 56, height: 56)
-                        .overlay(
-                            Group {
-                                if isSaving {
-                                    ProgressView()
-                                        .tint(.black)
-                                } else {
-                                    Image(systemName: "arrow.up")
-                                        .font(.system(size: 24, weight: .medium))
-                                        .foregroundColor(canSave ? .black : Theme.textSecondary)
-                                }
-                            }
-                        )
                 }
+                .foregroundColor(canSave ? .black : Theme.textSecondary.opacity(0.5))
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+                .background(
+                    Capsule()
+                        .fill(canSave ? Theme.accent : Color.white.opacity(0.08))
+                )
+                .overlay(
+                    Capsule()
+                        .stroke(canSave ? Theme.accent.opacity(0.5) : Color.white.opacity(0.1), lineWidth: 1)
+                )
             }
             .buttonStyle(.plain)
             .disabled(!canSave || isSaving)
             .scaleEffect(canSave ? 1.0 : 0.95)
             .animation(.spring(response: 0.3, dampingFraction: 0.6), value: canSave)
         }
-        .padding(.horizontal, 16)
     }
 }
 
 #Preview {
     ZStack {
         Theme.background.ignoresSafeArea()
-        ActionButtonsView(
-            onCancel: {},
-            onFinishSave: {},
-            canSave: true,
-            isSaving: false
-        )
+        VStack(spacing: 40) {
+            ActionButtonsView(
+                onBack: {},
+                onSaveMemory: {},
+                canSave: true,
+                isSaving: false
+            )
+            
+            ActionButtonsView(
+                onBack: {},
+                onSaveMemory: {},
+                canSave: false,
+                isSaving: false
+            )
+            
+            ActionButtonsView(
+                onBack: {},
+                onSaveMemory: {},
+                canSave: true,
+                isSaving: true
+            )
+        }
         .padding()
     }
 }

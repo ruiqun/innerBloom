@@ -15,7 +15,15 @@ struct ChatView: View {
     
     let messages: [ChatMessage]
     let isAITyping: Bool
+    let readOnly: Bool
     let onSendMessage: (String) -> Void
+    
+    init(messages: [ChatMessage], isAITyping: Bool, readOnly: Bool = false, onSendMessage: @escaping (String) -> Void) {
+        self.messages = messages
+        self.isAITyping = isAITyping
+        self.readOnly = readOnly
+        self.onSendMessage = onSendMessage
+    }
     
     @State private var inputText: String = ""
     @State private var scrollViewProxy: ScrollViewProxy?
@@ -30,7 +38,9 @@ struct ChatView: View {
                 .background(Color.white.opacity(0.1))
             
             // 快速输入区
-            quickInputArea
+            if !readOnly {
+                quickInputArea
+            }
         }
         .background(Theme.background.opacity(0.95))
     }

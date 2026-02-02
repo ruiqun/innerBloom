@@ -2,7 +2,7 @@
 //  AIService.swift
 //  innerBloom
 //
-//  统一 AI 服务层 - F-015, B-008, B-009
+//  统一 AI 服务层 - F-015, B-008, B-009, B-010 (F-005)
 //  职责：所有 AI 功能（分析、聊天、总结、标签）统一调用后端接口
 //
 //  设计原则 (F-015):
@@ -133,6 +133,25 @@ struct AIAnalysisContextDTO: Codable {
     }
 }
 
+/// 环境上下文（发送给后端的格式）(D-012, B-010)
+struct EnvironmentContextDTO: Codable {
+    let weather: String?
+    let temperature: Double?
+    let timePeriod: String
+    let timeDescription: String
+    let location: String?
+    let aiDescription: String
+    
+    init(from context: EnvironmentContext) {
+        self.weather = context.weather?.condition
+        self.temperature = context.weather?.temperature
+        self.timePeriod = context.timeInfo.period.rawValue
+        self.timeDescription = context.timeInfo.description
+        self.location = context.location?.city
+        self.aiDescription = context.aiDescription
+    }
+}
+
 /// 用户偏好
 struct AIChatPreferences: Codable {
     /// AI 回复风格：empathetic（同理心）、casual（轻松）、professional（专业）
@@ -151,19 +170,30 @@ struct AIChatPreferences: Codable {
     }
 }
 
-/// 聊天响应
-struct AIChatResponse: Codable {
-    /// AI 回复内容
-    let content: String
+// MARK: - 日记风格
+enum DiaryStyle: String, CaseIterable, Codable {
+    case warm = "warm"          // 温暖治愈
+    case minimal = "minimal"    // 极简客观
+    case humorous = "humorous"  // 幽默风趣
     
-    /// 检测到的用户情绪（可选）
-    let detectedMood: String?
+    var displayName: String {
+        switch self {
+        case .warm: return "温暖治愈"
+        case .minimal: return "极简客观"
+        case .humorous: return "幽默风趣"
+        }
+    }
     
-    /// 建议的后续问题（可选）
-    let suggestedFollowUp: String?
-    
-    /// 是否应该结束对话的建议
-    let shouldWrapUp: Bool?
+    var systemPromptInstruction: String {
+        switch self {
+        case .warm:
+            return "请用温暖、治愈、富有同理心的语气。多关注情感共鸣，像一个温柔的倾听者。"
+        case .minimal:
+            return "请用简洁、客观、理性的语气。多关注事实描述，像一个专业的记录者，不要过多的修饰词。"
+        case .humorous:
+            return "请用幽默、风趣、轻松的语气。可以适度调侃，像一个有趣的朋友，让对话充满快乐。"
+        }
+    }
 }
 
 // MARK: - AI 服务协议
@@ -186,19 +216,27 @@ protocol AIServiceProtocol {
     func chat(
         messages: [ChatMessage],
         analysisContext: AIAnalysisResult?,
-        diaryId: UUID
+        environmentContext: EnvironmentContext?,
+        diaryId: UUID,
+        style: DiaryStyle?
     ) async throws -> String
     
     /// 生成日记总结 (F-005) - B-010 实现
     func generateSummary(
         messages: [ChatMessage],
-        analysisContext: AIAnalysisResult?
-    ) async throws -> String
+        analysisContext: AIAnalysisResult?,
+        style: DiaryStyle?,
+        environmentContext: EnvironmentContext?
+    ) async throws -> (summary: String, title: String)
     
     /// 生成标签 (F-005) - B-010 实现
+    /// - Parameters:
+    ///   - existingTags: 已存在的标签名称列表，AI 会优先复用这些标签
     func generateTags(
         messages: [ChatMessage],
-        analysisContext: AIAnalysisResult?
+        analysisContext: AIAnalysisResult?,
+        style: DiaryStyle?,
+        existingTags: [String]
     ) async throws -> [String]
 }
 
@@ -270,7 +308,8 @@ final class AIService: AIServiceProtocol {
         mediaType: MediaType,
         userContext: String?
     ) async throws -> AIAnalysisResult {
-        print("[AIService] Starting media analysis, type: \(mediaType.rawValue), mode: \(currentMode)")
+        let totalStart = CFAbsoluteTimeGetCurrent()
+        print("[AIService] ⏱️ Starting media analysis, type: \(mediaType.rawValue), mode: \(currentMode)")
         
         // 1. 检查网络状态
         guard networkMonitor.isConnected else {
@@ -295,6 +334,7 @@ final class AIService: AIServiceProtocol {
         }
         
         // 4. 构建 JSON 请求（适配 Supabase Edge Function）
+        let prepStart = CFAbsoluteTimeGetCurrent()
         let url = try endpoint.url(for: .analyze)
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -304,6 +344,7 @@ final class AIService: AIServiceProtocol {
         
         // 5. 构建请求体（Base64 编码图片）
         let base64Image = imageData.base64EncodedString()
+        let base64Size = base64Image.count / 1024
         
         struct AnalyzeRequest: Codable {
             let image_base64: String
@@ -318,12 +359,15 @@ final class AIService: AIServiceProtocol {
         )
         
         request.httpBody = try JSONEncoder().encode(analyzeRequest)
+        let prepTime = CFAbsoluteTimeGetCurrent() - prepStart
         
-        print("[AIService] Sending analyze request to backend, image size: \(imageData.count / 1024)KB")
+        print("[AIService] ⏱️ Prep time: \(String(format: "%.2f", prepTime))s | Image: \(imageData.count / 1024)KB → Base64: \(base64Size)KB")
         
         // 6. 发送请求
+        let networkStart = CFAbsoluteTimeGetCurrent()
         do {
             let (data, response) = try await urlSession.data(for: request)
+            let networkTime = CFAbsoluteTimeGetCurrent() - networkStart
             
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw AIServiceError.invalidResponse
@@ -337,7 +381,10 @@ final class AIService: AIServiceProtocol {
             
             // 解析响应
             let result = try JSONDecoder().decode(AIAnalysisResult.self, from: data)
-            print("[AIService] Analysis completed: \(result.description.prefix(50))...")
+            let totalTime = CFAbsoluteTimeGetCurrent() - totalStart
+            
+            print("[AIService] ⏱️ Network+API time: \(String(format: "%.2f", networkTime))s | Total: \(String(format: "%.2f", totalTime))s")
+            print("[AIService] ✅ Analysis completed: \(result.description.prefix(50))...")
             return result
             
         } catch let error as AIServiceError {
@@ -355,20 +402,24 @@ final class AIService: AIServiceProtocol {
         }
     }
     
-    // MARK: - F-004: 聊天 (B-009)
+    // MARK: - F-004: 聊天 (B-009, B-010)
     
     /// 发送聊天消息并获取 AI 回复
     /// - Parameters:
     ///   - messages: 历史消息列表（包含当前用户消息）
     ///   - analysisContext: 媒体分析上下文（D-004）
+    ///   - environmentContext: 环境上下文（D-012, F-016）
     ///   - diaryId: 日记 ID
+    ///   - style: 日记风格
     /// - Returns: AI 回复内容
     func chat(
         messages: [ChatMessage],
         analysisContext: AIAnalysisResult?,
-        diaryId: UUID
+        environmentContext: EnvironmentContext? = nil,
+        diaryId: UUID,
+        style: DiaryStyle? = nil
     ) async throws -> String {
-        print("[AIService] Starting chat, messages count: \(messages.count), mode: \(currentMode)")
+        print("[AIService] Starting chat, messages: \(messages.count), env: \(environmentContext != nil), style: \(style?.rawValue ?? "nil"), mode: \(currentMode)")
         
         // 1. 检查网络状态
         guard networkMonitor.isConnected else {
@@ -378,10 +429,10 @@ final class AIService: AIServiceProtocol {
         // 2. 根据当前模式选择服务
         switch currentMode {
         case .openaiDirect:
-            return try await chatWithOpenAI(messages: messages, analysisContext: analysisContext)
+            return try await chatWithOpenAI(messages: messages, analysisContext: analysisContext, environmentContext: environmentContext, style: style)
         case .mock:
             print("[AIService] Using mock chat")
-            return try await mockChat(messages: messages, analysisContext: analysisContext)
+            return try await mockChat(messages: messages, analysisContext: analysisContext, environmentContext: environmentContext, style: style)
         case .backend:
             break // 继续使用后端
         }
@@ -389,13 +440,15 @@ final class AIService: AIServiceProtocol {
         // 3. 检查端点配置（后端模式）
         guard endpoint.isConfigured else {
             print("[AIService] Endpoint not configured, falling back to mock")
-            return try await mockChat(messages: messages, analysisContext: analysisContext)
+            return try await mockChat(messages: messages, analysisContext: analysisContext, environmentContext: environmentContext)
         }
         
         // 4. 构建请求（适配 Supabase Edge Function）
         struct EdgeFunctionChatRequest: Codable {
             let messages: [[String: String]]
             let analysis_context: AIAnalysisContextDTO?
+            let environment_context: EnvironmentContextDTO?
+            let style: String?
         }
         
         let chatMessages = messages.map { msg -> [String: String] in
@@ -404,7 +457,9 @@ final class AIService: AIServiceProtocol {
         
         let edgeRequest = EdgeFunctionChatRequest(
             messages: chatMessages,
-            analysis_context: analysisContext.map { AIAnalysisContextDTO(from: $0) }
+            analysis_context: analysisContext.map { AIAnalysisContextDTO(from: $0) },
+            environment_context: environmentContext.map { EnvironmentContextDTO(from: $0) },
+            style: style?.rawValue
         )
         
         // 5. 发送请求
@@ -461,7 +516,8 @@ final class AIService: AIServiceProtocol {
         _ userMessage: String,
         history: [ChatMessage],
         analysisContext: AIAnalysisResult?,
-        diaryId: UUID
+        diaryId: UUID,
+        style: DiaryStyle? = nil
     ) async throws -> String {
         // 构建完整的消息历史
         var allMessages = history
@@ -471,7 +527,8 @@ final class AIService: AIServiceProtocol {
         return try await chat(
             messages: allMessages,
             analysisContext: analysisContext,
-            diaryId: diaryId
+            diaryId: diaryId,
+            style: style
         )
     }
     
@@ -479,22 +536,483 @@ final class AIService: AIServiceProtocol {
     
     func generateSummary(
         messages: [ChatMessage],
-        analysisContext: AIAnalysisResult?
-    ) async throws -> String {
-        // TODO: B-010 实现
-        print("[AIService] Summary generation - will be implemented in B-010")
-        throw AIServiceError.analysisNotReady
+        analysisContext: AIAnalysisResult?,
+        style: DiaryStyle? = nil,
+        environmentContext: EnvironmentContext? = nil
+    ) async throws -> (summary: String, title: String) {
+        print("[AIService] Generating summary for \(messages.count) messages")
+        
+        // 至少需要一条消息才能生成总结
+        guard !messages.isEmpty else {
+            throw AIServiceError.invalidResponse
+        }
+        
+        // 1. 检查网络状态
+        guard networkMonitor.isConnected else {
+            print("[AIService] No network, using mock summary")
+            let mock = mockGenerateSummary(messages: messages, analysisContext: analysisContext)
+            return (summary: mock, title: "日记 \(Date().formatted(date: .numeric, time: .omitted))")
+        }
+        
+        // 2. 根据当前模式选择实现
+        switch currentMode {
+        case .openaiDirect:
+            return try await generateSummaryWithOpenAI(messages: messages, analysisContext: analysisContext, style: style, environmentContext: environmentContext)
+        case .mock:
+            print("[AIService] Using mock summary")
+            let mock = mockGenerateSummary(messages: messages, analysisContext: analysisContext)
+            return (summary: mock, title: "日记 \(Date().formatted(date: .numeric, time: .omitted))")
+        case .backend:
+            break // 继续使用后端
+        }
+        
+        // 3. 检查端点配置
+        guard endpoint.isConfigured else {
+            print("[AIService] Endpoint not configured, falling back to mock")
+            let mock = mockGenerateSummary(messages: messages, analysisContext: analysisContext)
+            return (summary: mock, title: "日记 \(Date().formatted(date: .numeric, time: .omitted))")
+        }
+        
+        // 4. 构建请求（适配 Supabase Edge Function）
+        struct EdgeFunctionSummaryRequest: Codable {
+            let messages: [[String: String]]
+            let analysis_context: AIAnalysisContextDTO?
+            let style: String?
+            let environment_context: EnvironmentContextDTO?
+        }
+        
+        let chatMessages = messages.map { msg -> [String: String] in
+            ["role": msg.sender == .user ? "user" : "assistant", "content": msg.content]
+        }
+        
+        let edgeRequest = EdgeFunctionSummaryRequest(
+            messages: chatMessages,
+            analysis_context: analysisContext.map { AIAnalysisContextDTO(from: $0) },
+            style: style?.rawValue,
+            environment_context: environmentContext.map { EnvironmentContextDTO(from: $0) }
+        )
+        
+        // 5. 发送请求
+        do {
+            let url = try endpoint.url(for: .summary)
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.timeoutInterval = requestTimeout
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(endpoint.apiKey)", forHTTPHeaderField: "Authorization")
+            
+            request.httpBody = try JSONEncoder().encode(edgeRequest)
+            
+            print("[AIService] Sending summary request to backend")
+            
+            let (data, response) = try await urlSession.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw AIServiceError.invalidResponse
+            }
+            
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let errorMessage = String(data: data, encoding: .utf8)
+                throw AIServiceError.serverError(statusCode: httpResponse.statusCode, message: errorMessage)
+            }
+            
+            // 解析响应
+            struct EdgeFunctionSummaryResponse: Codable {
+                let summary: String
+                let title: String?
+            }
+            
+            let summaryResponse = try JSONDecoder().decode(EdgeFunctionSummaryResponse.self, from: data)
+            
+            print("[AIService] Summary generated: \(summaryResponse.summary.prefix(50))...")
+            return (summary: summaryResponse.summary, title: summaryResponse.title ?? "无题")
+            
+        } catch let error as AIServiceError {
+            throw error
+        } catch let error as DecodingError {
+            throw AIServiceError.decodingError(error)
+        } catch {
+            if (error as NSError).code == NSURLErrorTimedOut {
+                throw AIServiceError.timeout
+            }
+            throw AIServiceError.serverError(statusCode: -1, message: error.localizedDescription)
+        }
     }
     
     // MARK: - F-005: 标签生成（B-010 实现）
     
     func generateTags(
         messages: [ChatMessage],
-        analysisContext: AIAnalysisResult?
+        analysisContext: AIAnalysisResult?,
+        style: DiaryStyle? = nil,
+        existingTags: [String] = []
     ) async throws -> [String] {
-        // TODO: B-010 实现
-        print("[AIService] Tag generation - will be implemented in B-010")
-        throw AIServiceError.analysisNotReady
+        print("[AIService] Generating tags for \(messages.count) messages, existing: \(existingTags.count)")
+        
+        // 1. 检查网络状态
+        guard networkMonitor.isConnected else {
+            print("[AIService] No network, using mock tags")
+            return mockGenerateTags(messages: messages, analysisContext: analysisContext, existingTags: existingTags)
+        }
+        
+        // 2. 根据当前模式选择实现
+        switch currentMode {
+        case .openaiDirect:
+            return try await generateTagsWithOpenAI(messages: messages, analysisContext: analysisContext, style: style, existingTags: existingTags)
+        case .mock:
+            print("[AIService] Using mock tags")
+            return mockGenerateTags(messages: messages, analysisContext: analysisContext, existingTags: existingTags)
+        case .backend:
+            break // 继续使用后端
+        }
+        
+        // 3. 检查端点配置
+        guard endpoint.isConfigured else {
+            print("[AIService] Endpoint not configured, falling back to mock")
+            return mockGenerateTags(messages: messages, analysisContext: analysisContext, existingTags: existingTags)
+        }
+        
+        // 4. 构建请求
+        struct EdgeFunctionTagsRequest: Codable {
+            let messages: [[String: String]]
+            let analysis_context: AIAnalysisContextDTO?
+            let style: String?
+            let existing_tags: [String]?
+        }
+        
+        let chatMessages = messages.map { msg -> [String: String] in
+            ["role": msg.sender == .user ? "user" : "assistant", "content": msg.content]
+        }
+        
+        let edgeRequest = EdgeFunctionTagsRequest(
+            messages: chatMessages,
+            analysis_context: analysisContext.map { AIAnalysisContextDTO(from: $0) },
+            style: style?.rawValue,
+            existing_tags: existingTags.isEmpty ? nil : existingTags
+        )
+        
+        // 5. 发送请求
+        do {
+            let url = try endpoint.url(for: .tags)
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.timeoutInterval = requestTimeout
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(endpoint.apiKey)", forHTTPHeaderField: "Authorization")
+            
+            request.httpBody = try JSONEncoder().encode(edgeRequest)
+            
+            print("[AIService] Sending tags request to backend")
+            
+            let (data, response) = try await urlSession.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw AIServiceError.invalidResponse
+            }
+            
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let errorMessage = String(data: data, encoding: .utf8)
+                throw AIServiceError.serverError(statusCode: httpResponse.statusCode, message: errorMessage)
+            }
+            
+            // 解析响应
+            struct EdgeFunctionTagsResponse: Codable {
+                let tags: [String]
+            }
+            
+            let tagsResponse = try JSONDecoder().decode(EdgeFunctionTagsResponse.self, from: data)
+            
+            print("[AIService] Tags generated: \(tagsResponse.tags)")
+            return tagsResponse.tags
+            
+        } catch let error as AIServiceError {
+            throw error
+        } catch let error as DecodingError {
+            throw AIServiceError.decodingError(error)
+        } catch {
+            if (error as NSError).code == NSURLErrorTimedOut {
+                throw AIServiceError.timeout
+            }
+            throw AIServiceError.serverError(statusCode: -1, message: error.localizedDescription)
+        }
+    }
+    
+    // MARK: - F-005: OpenAI 直连总结生成（开发模式）
+    
+    private func generateSummaryWithOpenAI(
+        messages: [ChatMessage],
+        analysisContext: AIAnalysisResult?,
+        style: DiaryStyle? = nil,
+        environmentContext: EnvironmentContext? = nil
+    ) async throws -> (summary: String, title: String) {
+        print("[AIService] Generating summary with OpenAI")
+        
+        // 构建对话内容
+        let conversationText = messages
+            .map { "\($0.sender == .user ? "用户" : "AI")：\($0.content)" }
+            .joined(separator: "\n")
+        
+        // 系统提示
+        var systemPrompt = """
+        你是一个日记总结助手。请根据用户与 AI 的对话内容，生成一篇使用者口吻的日记。
+        
+        要求：
+        1. 用第一人称「我」来写
+        2. 保持用户的语言风格
+        3. 自然地融入对话中提到的情感和故事
+        4. 2-3段，不超过300字
+        5. 不要添加对话中没有提到的内容
+        6. **严禁编造日期、时间、天气、地点等客观事实**。如果缺少这些信息，请不要提及。
+        7. 请同时生成一个简短的标题（不超过10个字）。
+        8. **标题绝对规则**：标题必须是内容的概括（如：'美好的下午'），**严禁使用日期格式（如：'2023年10月17日'）作为标题**。如果 AI 倾向于生成日期，请强制改为内容摘要。
+        9. 返回 JSON 格式：{"summary": "日记内容", "title": "日记标题"}
+        """
+        
+        if let style = style {
+            systemPrompt += "\n\n风格要求：\(style.systemPromptInstruction)"
+        }
+        
+        // 用户提示
+        var userPrompt = "以下是用户与 AI 的对话记录：\n\n\(conversationText)\n\n"
+        
+        if let analysis = analysisContext {
+            userPrompt += "图片内容：\(analysis.description)\n\n"
+        }
+        
+        // 添加环境上下文（作为客观事实依据）
+        if let env = environmentContext {
+            userPrompt += "【客观事实（必须严格遵守）】\n"
+            if let weather = env.weather {
+                userPrompt += "- 天气：\(weather.condition)，\(Int(weather.temperature ?? 0))°C\n"
+            }
+            userPrompt += "- 时间：\(env.timeInfo.description)\n"
+            if let location = env.location?.city {
+                userPrompt += "- 地点：\(location)\n"
+            }
+            userPrompt += "\n"
+        }
+        
+        userPrompt += "请根据以上内容，生成一篇使用者口吻的日记和标题。"
+        
+        do {
+            let openaiMessages = [
+                OpenAIMessage(role: .system, content: systemPrompt),
+                OpenAIMessage(role: .user, content: userPrompt)
+            ]
+            
+            let response = try await openAIService.chat(messages: openaiMessages)
+            
+            // 尝试解析 JSON
+            struct SummaryResponse: Codable {
+                let summary: String
+                let title: String
+            }
+            
+            if let jsonData = response.data(using: .utf8),
+               let result = try? JSONDecoder().decode(SummaryResponse.self, from: jsonData) {
+                return (summary: result.summary, title: result.title)
+            }
+            
+            // 降级处理
+            return (summary: response, title: "日记 \(Date().formatted(date: .numeric, time: .omitted))")
+            
+        } catch let error as OpenAIServiceError {
+            throw AIServiceError.serverError(statusCode: -1, message: error.localizedDescription)
+        }
+    }
+    
+    // MARK: - F-005: OpenAI 直连标签生成（开发模式）
+    
+    private func generateTagsWithOpenAI(
+        messages: [ChatMessage],
+        analysisContext: AIAnalysisResult?,
+        style: DiaryStyle? = nil,
+        existingTags: [String] = []
+    ) async throws -> [String] {
+        print("[AIService] Generating tags with OpenAI, existing: \(existingTags.count)")
+        
+        // 系统提示
+        var systemPrompt = """
+        你是一个标签生成助手。请根据对话内容生成**最多3个**标签。
+        
+        要求：
+        1. 返回 JSON 数组格式：["标签1", "标签2", "标签3"]
+        2. **最多3个标签**，宁少勿多，选最核心的
+        3. 标签应该是简短的关键词（2-4个字）
+        4. 只返回 JSON 数组，不要其他文字
+        """
+        
+        // 如果有已存在的标签，优先复用
+        if !existingTags.isEmpty {
+            systemPrompt += """
+            
+            5. **优先复用原则**：以下是已存在的标签，如果内容匹配，**必须优先使用**这些标签，避免创建含义相近的新标签：
+               已有标签：[\(existingTags.joined(separator: ", "))]
+               例如：如果已有「家人」，不要新建「家庭」；如果已有「旅行」，不要新建「旅游」
+            """
+        }
+        
+        if let style = style {
+            let styleNum = existingTags.isEmpty ? 5 : 6
+            switch style {
+            case .warm:
+                systemPrompt += "\n\(styleNum). 标签风格：温暖、感性、治愈"
+            case .minimal:
+                systemPrompt += "\n\(styleNum). 标签风格：简洁、客观、名词为主"
+            case .humorous:
+                systemPrompt += "\n\(styleNum). 标签风格：有趣、生动、带点幽默感"
+            }
+        }
+        
+        // 构建用户提示
+        var userPrompt = ""
+        
+        if let analysis = analysisContext {
+            userPrompt += "图片内容：\(analysis.description)\n\n"
+            if let sceneTags = analysis.sceneTags, !sceneTags.isEmpty {
+                userPrompt += "场景标签：\(sceneTags.joined(separator: ", "))\n\n"
+            }
+        }
+        
+        if !messages.isEmpty {
+            let conversationText = messages
+                .map { "\($0.sender == .user ? "用户" : "AI")：\($0.content)" }
+                .joined(separator: "\n")
+            userPrompt += "对话记录：\n\(conversationText)\n\n"
+        }
+        
+        userPrompt += "请根据以上内容生成**最多3个**标签。"
+        
+        do {
+            let openaiMessages = [
+                OpenAIMessage(role: .system, content: systemPrompt),
+                OpenAIMessage(role: .user, content: userPrompt)
+            ]
+            
+            let response = try await openAIService.chat(messages: openaiMessages)
+            
+            // 尝试解析 JSON
+            if let jsonData = response.data(using: String.Encoding.utf8),
+               let tags = try? JSONDecoder().decode([String].self, from: jsonData) {
+                return tags
+            }
+            
+            // 如果无法解析，尝试从文本中提取标签
+            return extractTagsFromText(response)
+            
+        } catch let error as OpenAIServiceError {
+            throw AIServiceError.serverError(statusCode: -1, message: error.localizedDescription)
+        }
+    }
+    
+    // MARK: - F-005: Mock 总结生成（离线/未配置时）
+    
+    private func mockGenerateSummary(
+        messages: [ChatMessage],
+        analysisContext: AIAnalysisResult?
+    ) -> String {
+        // 从用户消息中提取关键内容
+        let userMessages = messages.filter { $0.sender == .user }
+        let userContent = userMessages.map { $0.content }.joined(separator: "，")
+        
+        if let analysis = analysisContext {
+            let mood = analysis.mood ?? "平静"
+            return """
+            今天\(mood == "joyful" || mood == "开心" ? "心情很好" : "记录一下生活")。\(analysis.description)
+            
+            \(userContent.isEmpty ? "" : userContent)
+            
+            这是一段值得记住的时光。
+            """
+        }
+        
+        return userContent.isEmpty ? "今天的日记暂无内容。" : userContent
+    }
+    
+    // MARK: - F-005: Mock 标签生成（离线/未配置时）
+    
+    private func mockGenerateTags(
+        messages: [ChatMessage],
+        analysisContext: AIAnalysisResult?,
+        existingTags: [String] = []
+    ) -> [String] {
+        var tags: Set<String> = []
+        
+        // 从用户消息中检测关键词
+        let userContent = messages
+            .filter { $0.sender == .user }
+            .map { $0.content }
+            .joined(separator: " ")
+        
+        // 关键词到标签的映射
+        let keywordMapping: [String: String] = [
+            "朋友": "朋友",
+            "家人": "家人",
+            "姐姐": "家人",
+            "哥哥": "家人",
+            "爸": "家人",
+            "妈": "家人",
+            "旅行": "旅行",
+            "旅游": "旅行",
+            "美食": "美食",
+            "吃": "美食",
+            "工作": "工作",
+            "开心": "开心",
+            "快乐": "开心",
+            "难过": "难过",
+            "想念": "怀念",
+            "怀念": "怀念",
+            "回忆": "回忆"
+        ]
+        
+        for (keyword, tag) in keywordMapping {
+            if userContent.contains(keyword) {
+                // 优先使用已存在的标签
+                if existingTags.contains(tag) {
+                    tags.insert(tag)
+                } else if tags.count < 3 {
+                    tags.insert(tag)
+                }
+            }
+            // 最多3个
+            if tags.count >= 3 { break }
+        }
+        
+        // 如果没有匹配到任何标签，添加默认标签
+        if tags.isEmpty {
+            if existingTags.contains("生活") {
+                tags.insert("生活")
+            } else {
+                tags.insert("日记")
+            }
+        }
+        
+        return Array(tags).prefix(3).map { $0 }
+    }
+    
+    /// 从文本中提取标签（当 JSON 解析失败时使用）
+    private func extractTagsFromText(_ text: String) -> [String] {
+        var tags: [String] = []
+        
+        // 尝试匹配引号内的内容
+        let pattern = "[\"']([^\"']+)[\"']"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+            return ["生活", "日记"]
+        }
+        
+        let range = NSRange(text.startIndex..., in: text)
+        let matches = regex.matches(in: text, options: [], range: range)
+        
+        for match in matches {
+            if let tagRange = Range(match.range(at: 1), in: text) {
+                let tag = String(text[tagRange])
+                if !tag.isEmpty && tag.count <= 10 {
+                    tags.append(tag)
+                }
+            }
+        }
+        
+        return tags.isEmpty ? ["生活", "日记"] : Array(tags.prefix(8))
     }
     
     // MARK: - OpenAI 直接调用（开发模式）
@@ -576,42 +1094,57 @@ final class AIService: AIServiceProtocol {
     /// 使用 OpenAI Chat API 进行对话
     private func chatWithOpenAI(
         messages: [ChatMessage],
-        analysisContext: AIAnalysisResult?
+        analysisContext: AIAnalysisResult?,
+        environmentContext: EnvironmentContext? = nil,
+        style: DiaryStyle? = nil
     ) async throws -> String {
-        print("[AIService] Chatting with OpenAI")
+        print("[AIService] Chatting with OpenAI (Best Friend Mode), style: \(style?.rawValue ?? "default")")
         
-        // 构建系统提示
-        var systemPrompt = """
-        你是一个温暖、善解人意的日记陪伴助手。用户正在通过照片或视频记录生活，你的任务是：
-        1. 用温暖、富有同理心的语气与用户对话
-        2. 引导用户分享照片背后的故事和感受
-        3. 适时给予情感支持和鼓励
-        4. 保持对话自然流畅，像朋友一样交流
+        // 构建"最懂你的好朋友"系统提示
+        var systemPrompt = buildBestFriendPrompt(
+            hasMediaAnalysis: analysisContext != nil,
+            hasEnvironment: environmentContext?.hasValidInfo == true
+        )
         
-        回复要求：
-        - 使用繁体中文或简体中文（跟随用户的语言）
-        - 回复简洁，通常2-4句话
-        - 多用问句引导用户继续分享
-        - 避免说教或给太多建议
-        """
+        // 添加风格特定的提示
+        if let style = style {
+            systemPrompt += "\n\n## 风格要求\n\(style.systemPromptInstruction)"
+        }
         
-        // 添加媒体分析上下文
+        // 构建上下文信息
+        var contextParts: [String] = []
+        
+        // 1. 媒体分析（权重高）- 只在有分析结果时提供
         if let analysis = analysisContext {
-            systemPrompt += """
-            
-            关于用户上传的媒体内容：
-            - 场景描述：\(analysis.description)
-            - 场景标签：\(analysis.sceneTags?.joined(separator: ", ") ?? "未知")
-            - 情绪氛围：\(analysis.mood ?? "未知")
-            - 是否有人物：\(analysis.hasPeople == true ? "是" : "否")
-            
-            请结合这些信息来回应用户。
-            """
+            contextParts.append("""
+            【照片/影片内容】
+            - 场景：\(analysis.description)
+            - 标签：\(analysis.sceneTags?.joined(separator: "、") ?? "无")
+            - 氛围：\(analysis.mood ?? "未知")
+            - 有人物：\(analysis.hasPeople == true ? "是" : "否")
+            """)
+        }
+        
+        // 2. 时间（轻量点缀）- 只在有时间信息时提供
+        if let env = environmentContext {
+            let timeDesc = "当前：\(env.timeInfo.description)"
+            contextParts.append("【时间】\(timeDesc)")
+        }
+        
+        // 3. 天气（轻量点缀）- 只在有天气信息时提供
+        if let env = environmentContext, let weather = env.weather {
+            let weatherDesc = "\(weather.condition)，\(Int(weather.temperature ?? 0))°C"
+            contextParts.append("【天气】\(weatherDesc)")
+        }
+        
+        // 构建完整的上下文提示
+        var fullPrompt = systemPrompt
+        if !contextParts.isEmpty {
+            fullPrompt += "\n\n---\n可用上下文（按需使用，没有的不要编造）：\n" + contextParts.joined(separator: "\n")
         }
         
         // 转换消息格式
         var openAIMessages: [OpenAIMessage] = []
-        
         for msg in messages {
             let role: OpenAIRole = msg.sender == .user ? .user : .assistant
             openAIMessages.append(OpenAIMessage(role: role, content: msg.content))
@@ -620,16 +1153,89 @@ final class AIService: AIServiceProtocol {
         do {
             let response = try await openAIService.chat(
                 messages: openAIMessages,
-                systemPrompt: systemPrompt
+                systemPrompt: fullPrompt
             )
             
-            print("[AIService] OpenAI chat response received")
-            return response
+            // 解析结构化响应
+            let parsed = AIChatResponse.parse(from: response)
+            print("[AIService] OpenAI response parsed, has suggestions: \(parsed.suggestedPrompts != nil)")
+            
+            // 返回主回复（UI 层会处理 suggested_prompts）
+            return parsed.assistantReply
             
         } catch let error as OpenAIServiceError {
             print("[AIService] OpenAI chat failed: \(error)")
             throw AIServiceError.serverError(statusCode: -1, message: error.localizedDescription)
         }
+    }
+    
+    /// 构建"最懂你的好朋友"系统提示
+    private func buildBestFriendPrompt(hasMediaAnalysis: Bool, hasEnvironment: Bool) -> String {
+        var prompt = """
+        你是用户「最懂他的好朋友」，一个温暖、安全、愿意倾听的日记陪伴者。
+        
+        ## 你的核心特质
+        - 让用户感到被理解、被接纳、可以说秘密
+        - 持续倾听，不急着给建议，不说教
+        - 共情 + 具体追问（问"容易回答的小问题"）
+        - 当用户不知道说什么时，主动带话题（不尬聊）
+        
+        ## 对话节奏（重要！）
+        - **绝对规则**：每次回复只能有一个问句（?）。严禁在一个段落或一次回复中出现两个问号。
+        - 问句只能放在回复的最后一句。不要在中间提问，也不要用反问句举例。
+        - 错误示范：「有没有什么事情让你更有信心？比如了解自己？」 -> 包含两个问号，禁止。
+        - 正确示范：「有没有什么事情让你更有信心，比如了解自己。」 -> 只有一个问号，允许。
+        - 连续1-2次对话后，要主动开一个完全不同的新话题，不要一直顺着用户的描述走
+        - 可以分享一个小故事、小秘密、或者聊照片里的某个细节
+        - 分享时像跟好朋友悄悄说秘密一样，例如：「看到这张照片，我突然想到一件事...」
+        
+        ## 图片与文字不相关时的处理（重要！）
+        - 如果用户的文字和照片内容看起来不相关，要温柔地做连接
+        - 例如：用户上传瀑布照片但说工作很累，可以说：
+          「工作累的时候，你选了这张瀑布照片...是不是有时候也想像水流一样，把所有压力都冲走？」
+        - 用好奇的方式引导：「为什么选这张照片呢？是不是有什么特别的想法？」
+        
+        ## 输入权重（从高到低）
+        1. 用户文字（最重要！）
+        2. 照片/影片分析（如果有）
+        3. 历史对话（承接情绪）
+        4. 时间/天气（只能轻量点缀，不强调）
+        
+        ## 严格规则
+        """
+        
+        if !hasMediaAnalysis {
+            prompt += "\n- ⚠️ 没有照片分析，不要描述照片内容，只能说「你上传的照片/影片」"
+        }
+        
+        if !hasEnvironment {
+            prompt += "\n- ⚠️ 没有时间/天气信息，完全不要提及时间或天气"
+        }
+        
+        prompt += """
+        
+        - 没有的信息绝对不要编造或猜测
+        - 用户输入很短时，必须提供 2-3 个建议话题
+        - **再次强调**：一次回复只能有一个问号，放在最后。不要用“...呢？比如...？”这种连续提问句式。
+        
+        ## 回复风格
+        - 语言：跟随用户（繁体/简体中文）
+        - 长度：3-6句话，温柔自然，不啰嗦
+        - 不要每次都以问句结尾，可以分享感想后自然结束，或用轻松的邀请语
+        
+        ## 输出格式（必须是有效 JSON）
+        {
+          "assistant_reply": "你的主要回复（3-6句，温暖自然）",
+          "follow_up_questions": ["最多2个具体追问"],
+          "suggested_prompts": ["最多3个一键话题，用户卡住时用"],
+          "tone_tags": ["warm", "supportive"],
+          "safety_note": ""
+        }
+        
+        只输出 JSON，不要其他文字。
+        """
+        
+        return prompt
     }
     
     // MARK: - Mock 实现（开发阶段使用）
@@ -661,9 +1267,11 @@ final class AIService: AIServiceProtocol {
     /// 模拟 AI 聊天（当后端未配置时使用）(B-009)
     private func mockChat(
         messages: [ChatMessage],
-        analysisContext: AIAnalysisResult?
+        analysisContext: AIAnalysisResult?,
+        environmentContext: EnvironmentContext? = nil,
+        style: DiaryStyle? = nil
     ) async throws -> String {
-        print("[AIService] Using mock chat")
+        print("[AIService] Using mock chat (env: \(environmentContext != nil))")
         
         // 模拟网络延迟（根据对话长度调整）
         let delay = UInt64(Double.random(in: 0.8...2.0) * 1_000_000_000)
@@ -671,6 +1279,10 @@ final class AIService: AIServiceProtocol {
         
         // 获取最后一条用户消息
         guard let lastUserMessage = messages.last(where: { $0.sender == .user }) else {
+            // B-010: 结合环境上下文的默认回复
+            if let env = environmentContext {
+                return env.generateGreeting() + "想聊些什么呢？"
+            }
             return "你好！想聊些什么呢？"
         }
         
@@ -680,7 +1292,8 @@ final class AIService: AIServiceProtocol {
         return generateMockChatResponse(
             userInput: userInput,
             messageCount: messages.count,
-            analysisContext: analysisContext
+            analysisContext: analysisContext,
+            environmentContext: environmentContext
         )
     }
     
@@ -688,13 +1301,28 @@ final class AIService: AIServiceProtocol {
     private func generateMockChatResponse(
         userInput: String,
         messageCount: Int,
-        analysisContext: AIAnalysisResult?
+        analysisContext: AIAnalysisResult?,
+        environmentContext: EnvironmentContext? = nil
     ) -> String {
         // 根据用户输入内容匹配合适的回复
         
+        // B-010: 环境相关前缀（偶尔使用）
+        let envPrefix: String
+        if let env = environmentContext, env.hasValidInfo, Bool.random() {
+            if let weather = env.weather?.condition, weather.contains("雨") {
+                envPrefix = "外面在下雨呢，"
+            } else if env.timeInfo.period == .night {
+                envPrefix = "夜深了，"
+            } else {
+                envPrefix = ""
+            }
+        } else {
+            envPrefix = ""
+        }
+        
         // 情绪相关
         if userInput.contains("开心") || userInput.contains("高兴") || userInput.contains("快乐") || userInput.contains("棒") {
-            return [
+            return envPrefix + [
                 "看得出来你很开心呢！是什么让你这么高兴？",
                 "能感受到你的喜悦，这种快乐的时刻值得记录下来。",
                 "真好！快乐是会传染的，我也感到开心了。",
@@ -909,35 +1537,63 @@ final class AIService: AIServiceProtocol {
 // MARK: - 便捷扩展
 
 extension AIService {
-    /// 从 UIImage 分析媒体
+    /// 从 UIImage 分析媒体（优化版：缩小尺寸 + 压缩质量）
     func analyzeImage(
         _ image: UIImage,
         mediaType: MediaType = .photo,
         userContext: String? = nil
     ) async throws -> AIAnalysisResult {
-        // 压缩图片用于分析（最大 1MB）
-        guard let imageData = image.jpegData(compressionQuality: 0.7) else {
+        let startTime = CFAbsoluteTimeGetCurrent()
+        
+        // 1. 先缩小图片尺寸（Vision API 用 low detail 模式，512px 足够）
+        let maxDimension: CGFloat = 768
+        let resizedImage = resizeImageIfNeeded(image, maxDimension: maxDimension)
+        
+        // 2. 压缩图片（目标 200-400KB，平衡质量和速度）
+        let maxSize = 500 * 1024    // 500KB 上限
+        
+        guard var finalData = resizedImage.jpegData(compressionQuality: 0.6) else {
             throw AIServiceError.uploadFailed(NSError(domain: "AIService", code: -1, userInfo: [NSLocalizedDescriptionKey: "无法压缩图片"]))
         }
         
         // 如果仍然太大，进一步压缩
-        let maxSize = 1024 * 1024 // 1MB
-        var finalData = imageData
-        var quality: CGFloat = 0.7
-        
-        while finalData.count > maxSize && quality > 0.1 {
+        var quality: CGFloat = 0.6
+        while finalData.count > maxSize && quality > 0.2 {
             quality -= 0.1
-            if let compressed = image.jpegData(compressionQuality: quality) {
+            if let compressed = resizedImage.jpegData(compressionQuality: quality) {
                 finalData = compressed
             }
         }
         
-        print("[AIService] Image compressed: \(finalData.count / 1024)KB")
+        let prepTime = CFAbsoluteTimeGetCurrent() - startTime
+        print("[AIService] ⏱️ Image prep: \(String(format: "%.2f", prepTime))s | Original: \(Int(image.size.width))x\(Int(image.size.height)) → \(Int(resizedImage.size.width))x\(Int(resizedImage.size.height)) | Size: \(finalData.count / 1024)KB")
         
         return try await analyzeMedia(
             imageData: finalData,
             mediaType: mediaType,
             userContext: userContext
         )
+    }
+    
+    /// 缩小图片尺寸（保持比例）
+    private func resizeImageIfNeeded(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
+        let size = image.size
+        
+        // 如果图片已经够小，直接返回
+        if size.width <= maxDimension && size.height <= maxDimension {
+            return image
+        }
+        
+        // 计算缩放比例
+        let ratio = min(maxDimension / size.width, maxDimension / size.height)
+        let newSize = CGSize(width: size.width * ratio, height: size.height * ratio)
+        
+        // 使用高效的方式缩放
+        let renderer = UIGraphicsImageRenderer(size: newSize)
+        let resizedImage = renderer.image { _ in
+            image.draw(in: CGRect(origin: .zero, size: newSize))
+        }
+        
+        return resizedImage
     }
 }

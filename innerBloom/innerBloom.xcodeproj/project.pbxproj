@@ -256,8 +256,10 @@
 				DEVELOPMENT_TEAM = 26R89F43H5;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "需要麦克风权限以使用语音输入功能\n需要麦克风权限以使用语音输入功能\n";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "需要语音识别权限以将语音转换为文字\n";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "需要位置权限以获取您附近的天气信息";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "需要麦克风权限以使用语音输入功能";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "需要照片库权限以选择和保存照片";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "需要语音识别权限以将语音转换为文字";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -294,8 +296,10 @@
 				DEVELOPMENT_TEAM = 26R89F43H5;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "需要麦克风权限以使用语音输入功能\n需要麦克风权限以使用语音输入功能\n";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "需要语音识别权限以将语音转换为文字\n";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "需要位置权限以获取您附近的天气信息";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "需要麦克风权限以使用语音输入功能";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "需要照片库权限以选择和保存照片";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "需要语音识别权限以将语音转换为文字";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

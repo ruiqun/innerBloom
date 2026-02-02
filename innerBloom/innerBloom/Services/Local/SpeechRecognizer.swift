@@ -206,27 +206,31 @@ final class SpeechRecognizer {
         status = .processing
         print("[SpeechRecognizer] Stopping recording...")
         
-        // 停止音频引擎
-        audioEngine.stop()
+        // 1. 先结束识别请求（让它知道音频结束了）
+        recognitionRequest?.endAudio()
+        
+        // 2. 停止音频引擎
+        if audioEngine.isRunning {
+            audioEngine.stop()
+        }
         audioEngine.inputNode.removeTap(onBus: 0)
         
-        // 结束识别请求
-        recognitionRequest?.endAudio()
+        // 3. 清理识别请求
         recognitionRequest = nil
-        
-        // 取消识别任务（如果还在进行）
-        // 注意：不要立即取消，让它完成最后的处理
         
         // 使用最终结果
         finalResult = transcribedText
         
         // 等待一小段时间让最后的识别完成
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             guard let self = self else { return }
             
             // 取消任务
             self.recognitionTask?.cancel()
             self.recognitionTask = nil
+            
+            // 4. 停用音频会话（关键：防止 Simulator 音频设备错误）
+            self.deactivateAudioSession()
             
             // 回调最终结果
             let result = self.finalResult.isEmpty ? self.transcribedText : self.finalResult
@@ -247,20 +251,39 @@ final class SpeechRecognizer {
         
         print("[SpeechRecognizer] Canceling recording")
         
-        // 停止音频引擎
-        audioEngine.stop()
+        // 1. 结束识别请求
+        recognitionRequest?.endAudio()
+        recognitionRequest = nil
+        
+        // 2. 停止音频引擎
+        if audioEngine.isRunning {
+            audioEngine.stop()
+        }
         audioEngine.inputNode.removeTap(onBus: 0)
         
-        // 取消识别
+        // 3. 取消识别任务
         recognitionTask?.cancel()
         recognitionTask = nil
-        recognitionRequest = nil
+        
+        // 4. 停用音频会话
+        deactivateAudioSession()
         
         // 清除状态
         status = .idle
         transcribedText = ""
         finalResult = ""
         audioLevel = 0.0
+    }
+    
+    /// 停用音频会话（防止 Simulator 音频设备错误）
+    private func deactivateAudioSession() {
+        do {
+            try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            print("[SpeechRecognizer] Audio session deactivated")
+        } catch {
+            // 在 Simulator 中可能会失败，忽略错误
+            print("[SpeechRecognizer] Audio session deactivation ignored: \(error.localizedDescription)")
+        }
     }
     
     // MARK: - Private Methods
@@ -357,8 +380,8 @@ final class SpeechRecognizer {
     // MARK: - Cleanup
     
     /// 清理资源
+    @MainActor
     func cleanup() {
         cancelRecording()
-        try? AVAudioSession.sharedInstance().setActive(false)
     }
 }

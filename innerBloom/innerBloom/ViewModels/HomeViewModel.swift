@@ -7,6 +7,7 @@
 //  B-004: 整合 Supabase Storage 云端上传
 //  B-008: 接入 AI 分析（F-003）
 //  B-009: 接入 AI 连续聊天（F-004）
+//  B-010: 环境感知整合（F-016 + D-012）+ 结束保存 + 总结/标签生成（F-005）
 //
 
 import Foundation
@@ -30,10 +31,21 @@ struct MediaSelection {
 @Observable
 final class HomeViewModel {
     
+    // MARK: - Singleton
+    
+    /// 单例实例（避免 SwiftUI View 重建时重复初始化）
+    static let shared = HomeViewModel()
+    
     // MARK: - 显示模式
     
     /// 当前模式（浏览/创建）
     var currentMode: HomeMode = .browsing
+    
+    /// 当前选中的日记（用于详情页展示 S-002）
+    var selectedDiary: DiaryEntry?
+    
+    /// 当前选择的日记风格
+    var selectedStyle: DiaryStyle = .warm
     
     // MARK: - 标签相关 (F-009)
     
@@ -74,6 +86,9 @@ final class HomeViewModel {
     /// 当前会话的聊天消息 (D-003)
     var chatMessages: [ChatMessage] = []
     
+    /// AI 建议的话题/选项（用户卡住时显示）
+    var suggestedPrompts: [String] = []
+    
     /// AI 是否正在输入 (B-007)
     var isAITyping: Bool = false
     
@@ -90,6 +105,25 @@ final class HomeViewModel {
     
     /// AI 分析进度文字
     var analysisProgressText: String = ""
+    
+    // MARK: - AI 生成相关 (F-005, B-010)
+    
+    /// 是否正在生成总结/标签
+    var isGenerating: Bool = false
+    
+    /// 生成进度文字
+    var generationProgressText: String = ""
+    
+    /// 生成的标签名称（用于关联到 Tag 表）
+    var generatedTagNames: [String] = []
+    
+    // MARK: - 环境感知 (B-010, F-016)
+    
+    /// 当前环境上下文（D-012）
+    var currentEnvironment: EnvironmentContext?
+    
+    /// 是否正在获取环境信息
+    var isLoadingEnvironment: Bool = false
     
     // MARK: - 状态标识
     
@@ -118,11 +152,12 @@ final class HomeViewModel {
     private let storageService = SupabaseStorageService.shared  // B-004
     private let databaseService = SupabaseDatabaseService.shared // B-005
     private let networkMonitor = NetworkMonitor.shared          // B-004
+    private let environmentService = EnvironmentService.shared  // B-010
     private let aiService = AIService.shared                    // B-008
     
     // MARK: - 初始化
     
-    init() {
+    private init() {
         print("[HomeViewModel] Initialized")
         // 初始加载标签
         loadTags()
@@ -178,6 +213,62 @@ final class HomeViewModel {
         loadDiariesForCurrentTag()
     }
     
+    // MARK: - 详情页操作 (S-002)
+    
+    /// 进入日记详情
+    func showDiaryDetail(_ entry: DiaryEntry) {
+        print("[HomeViewModel] Show detail for diary: \(entry.id)")
+        selectedDiary = entry
+    }
+    
+    /// 关闭日记详情
+    func closeDiaryDetail() {
+        print("[HomeViewModel] Close diary detail")
+        selectedDiary = nil
+    }
+    
+    /// 从详情页点击标签跳转
+    func selectTagFromDetail(_ tag: Tag) {
+        print("[HomeViewModel] Jump to tag from detail: \(tag.name)")
+        closeDiaryDetail()
+        selectTag(tag)
+    }
+    
+    /// 删除日记
+    func deleteDiary(_ entry: DiaryEntry) {
+        print("[HomeViewModel] Deleting diary: \(entry.id)")
+        
+        // 1. 立即更新 UI (Optimistic Update)
+        // 先关闭详情页，再移除列表项，让用户感觉“秒删”
+        if selectedDiary?.id == entry.id {
+            closeDiaryDetail()
+        }
+        
+        // 延迟一点点移除列表项，让关闭动画更自然（可选，这里直接移除也可以）
+        if let index = diaryEntries.firstIndex(where: { $0.id == entry.id }) {
+            diaryEntries.remove(at: index)
+        }
+        
+        // 2. 异步执行后台删除
+        Task {
+            // 从本地删除
+            try? draftManager.deleteDraft(id: entry.id)
+            
+            // 从云端删除
+            if networkMonitor.isConnected && SupabaseConfig.shared.isConfigured {
+                do {
+                    try await databaseService.deleteDiary(id: entry.id)
+                    print("[HomeViewModel] Cloud diary deleted: \(entry.id)")
+                } catch {
+                    print("[HomeViewModel] Failed to delete cloud diary: \(error)")
+                    // 注意：这里如果失败了，UI 已经删除了。
+                    // 理想情况下应该有回滚机制或错误提示，但为了体验流畅，
+                    // 这里假设删除意图已传达，暂不回滚 UI。
+                }
+            }
+        }
+    }
+    
     // MARK: - 日记列表操作 (B-005)
     
     /// 加载当前标签下的日记
@@ -204,7 +295,13 @@ final class HomeViewModel {
         do {
             // 如果选中「全部」标签，传 nil；否则传标签 ID
             let tagId = selectedTag.id.uuidString == "00000000-0000-0000-0000-000000000000" ? nil : selectedTag.id
-            let entries = try await databaseService.getDiaries(tagId: tagId)
+            var entries = try await databaseService.getDiaries(tagId: tagId)
+            
+            // 开发模式：清理云端旧日记，只保留最新一条
+            if DevConfig.shouldCleanCloud && entries.count > 1 {
+                entries = await cleanOldCloudDiaries(entries)
+            }
+            
             diaryEntries = entries
             print("[HomeViewModel] Diaries loaded from cloud: \(entries.count)")
         } catch {
@@ -213,12 +310,102 @@ final class HomeViewModel {
         }
     }
     
+    /// 开发模式：清理云端旧日记，只保留最新一条
+    @MainActor
+    private func cleanOldCloudDiaries(_ entries: [DiaryEntry]) async -> [DiaryEntry] {
+        print("[HomeViewModel] 🛠️ Dev mode: Cleaning old cloud diaries...")
+        
+        // 按创建时间排序，最新的在前
+        let sortedEntries = entries.sorted { $0.createdAt > $1.createdAt }
+        
+        guard let newestEntry = sortedEntries.first else {
+            return entries
+        }
+        
+        // 收集需要保留的 tag IDs
+        let keepTagIds = Set(newestEntry.tagIds)
+        
+        // 删除除最新一条外的所有日记
+        var deletedCount = 0
+        for (index, entry) in sortedEntries.enumerated() {
+            if index > 0 {
+                do {
+                    try await databaseService.deleteDiary(id: entry.id)
+                    deletedCount += 1
+                    print("[HomeViewModel] 🗑️ Deleted cloud diary: \(entry.id)")
+                } catch {
+                    print("[HomeViewModel] ⚠️ Failed to delete diary \(entry.id): \(error)")
+                }
+            }
+        }
+        
+        // 清理未使用的 tags
+        await cleanUnusedTags(keepTagIds: keepTagIds)
+        
+        // 标记已清理
+        DevConfig.markCloudCleaned()
+        
+        print("[HomeViewModel] ✅ Dev mode: Cleaned \(deletedCount) old diaries, kept 1 newest")
+        
+        return [newestEntry]
+    }
+    
+    /// 清理未使用的 tags（保留必要的 tags）
+    @MainActor
+    private func cleanUnusedTags(keepTagIds: Set<UUID>) async {
+        // 获取所有 tags
+        guard let allTags = try? await databaseService.getTags() else { return }
+        
+        // 需要删除的 tags（不在保留列表中的）
+        let tagsToDelete = allTags.filter { tag in
+            // 保留「全部」标签
+            if tag.id.uuidString == "00000000-0000-0000-0000-000000000000" {
+                return false
+            }
+            // 保留正在使用的 tags
+            return !keepTagIds.contains(tag.id)
+        }
+        
+        for tag in tagsToDelete {
+            do {
+                try await databaseService.deleteTag(id: tag.id)
+                print("[HomeViewModel] 🗑️ Deleted unused tag: \(tag.name)")
+            } catch {
+                print("[HomeViewModel] ⚠️ Failed to delete tag \(tag.name): \(error)")
+            }
+        }
+        
+        if !tagsToDelete.isEmpty {
+            print("[HomeViewModel] ✅ Cleaned \(tagsToDelete.count) unused tags")
+            // 重新加载 tags
+            await loadTagsFromCloud()
+        }
+    }
+    
     /// 加载未完成的草稿
     private func loadPendingDrafts() {
+        // 打印开发配置
+        DevConfig.printConfig()
+        
         let drafts = draftManager.loadAllDrafts()
         if !drafts.isEmpty {
             print("[HomeViewModel] Found \(drafts.count) pending drafts")
-            // TODO: 可以提示用户有未完成的草稿
+            
+            // 开发模式：只保留最新的一条草稿，删除其他
+            if DevConfig.isDevelopmentMode && DevConfig.cleanOldDrafts && drafts.count > 1 {
+                // 按更新时间排序，最新的在前
+                let sortedDrafts = drafts.sorted { $0.updatedAt > $1.updatedAt }
+                
+                // 删除除最新一条外的所有草稿
+                for (index, draft) in sortedDrafts.enumerated() {
+                    if index > 0 {
+                        try? draftManager.deleteDraft(id: draft.id)
+                        print("[HomeViewModel] 🗑️ Deleted old draft: \(draft.id)")
+                    }
+                }
+                
+                print("[HomeViewModel] ✅ Dev mode: Cleaned up \(drafts.count - 1) old drafts, kept 1 newest")
+            }
         }
     }
     
@@ -254,6 +441,7 @@ final class HomeViewModel {
         currentMediaType = .photo
         userInputText = ""
         chatMessages = []
+        suggestedPrompts = []       // Best Friend Mode
         isAITyping = false          // B-007
         showFullChatView = false    // B-007
         isAnalyzing = false         // B-008
@@ -261,21 +449,38 @@ final class HomeViewModel {
         analysisProgressText = ""   // B-008
         isSendingMessage = false    // B-009
         pendingRetryMessage = nil   // B-009
+        isGenerating = false        // F-005
+        generationProgressText = "" // F-005
+        generatedTagNames = []      // F-005
+        currentEnvironment = nil    // B-010
+        isLoadingEnvironment = false // B-010
         isSavingMedia = false
         isSavingDraft = false
         errorMessage = nil
+        selectedStyle = .warm       // Reset style
     }
     
-    /// 结束保存 (F-005, B-004, B-008)
+    /// 结束保存 (F-005, B-004, B-008, B-010)
     func finishAndSave() {
         print("[HomeViewModel] Finish and save triggered")
         
-        guard var draft = currentDraft else {
+        guard currentDraft != nil else {
             showErrorMessage("没有可保存的内容")
             return
         }
         
-        // 更新草稿数据
+        // 启动异步保存流程（包含 AI 生成）
+        Task {
+            await performFinishAndSave()
+        }
+    }
+    
+    /// 执行完整的保存流程（F-005）
+    @MainActor
+    private func performFinishAndSave() async {
+        guard var draft = currentDraft else { return }
+        
+        // 1. 更新基本草稿数据
         draft.userInputText = userInputText.isEmpty ? nil : userInputText
         draft.messages = chatMessages
         draft.isSaved = true
@@ -287,11 +492,63 @@ final class HomeViewModel {
         }
         
         draft.touch()
+        currentDraft = draft
         
-        // 保存草稿到本机
+        // 2. F-005: 生成 AI 总结和标签（如果有聊天记录）
+        if !chatMessages.isEmpty {
+            isGenerating = true
+            
+            // 2.1 生成日记总结
+            generationProgressText = "正在生成日记总结..."
+            do {
+                let result = try await aiService.generateSummary(
+                    messages: chatMessages,
+                    analysisContext: currentAnalysis,
+                    style: selectedStyle,
+                    environmentContext: currentEnvironment
+                )
+                draft.diarySummary = result.summary
+                draft.title = result.title
+                draft.style = selectedStyle.rawValue
+                draft.isSummarized = true
+                print("[HomeViewModel] Summary generated: \(result.summary.prefix(50))... Title: \(result.title)")
+            } catch {
+                print("[HomeViewModel] Summary generation failed: \(error)")
+                // 总结生成失败不阻断保存流程
+            }
+            
+            // 2.2 生成标签
+            generationProgressText = "正在生成标签..."
+            do {
+                // 获取已存在的标签名称（用于优先复用）
+                let existingTagNames = availableTags
+                    .filter { $0.id.uuidString != "00000000-0000-0000-0000-000000000000" } // 排除「全部」
+                    .map { $0.name }
+                
+                let tagNames = try await aiService.generateTags(
+                    messages: chatMessages,
+                    analysisContext: currentAnalysis,
+                    style: selectedStyle,
+                    existingTags: existingTagNames
+                )
+                generatedTagNames = tagNames
+                print("[HomeViewModel] Tags generated: \(tagNames) (existing: \(existingTagNames.count))")
+                
+                // 关联标签（创建或查找已有标签）
+                await associateTagsWithDraft(tagNames: tagNames, draft: &draft)
+            } catch {
+                print("[HomeViewModel] Tag generation failed: \(error)")
+                // 标签生成失败不阻断保存流程
+            }
+            
+            isGenerating = false
+            generationProgressText = ""
+        }
+        
+        // 3. 保存草稿到本机
         do {
             try draftManager.saveDraft(draft)
-            print("[HomeViewModel] Draft saved locally (with analysis: \(draft.isAnalyzed))")
+            print("[HomeViewModel] Draft saved locally (summary: \(draft.isSummarized), tags: \(draft.tagIds.count))")
         } catch {
             showErrorMessage("保存失败：\(error.localizedDescription)")
             return
@@ -300,10 +557,47 @@ final class HomeViewModel {
         // 更新当前草稿引用
         currentDraft = draft
         
-        // 异步上传到云端 (B-004)
-        Task {
-            await uploadToCloud()
+        // 4. 异步上传到云端 (B-004)
+        await uploadToCloud()
+    }
+    
+    /// 将生成的标签名称关联到草稿（F-005）
+    @MainActor
+    private func associateTagsWithDraft(tagNames: [String], draft: inout DiaryEntry) async {
+        var tagIds: [UUID] = []
+        
+        for tagName in tagNames {
+            // 先检查本地是否有同名标签
+            if let existingTag = availableTags.first(where: { $0.name == tagName }) {
+                tagIds.append(existingTag.id)
+                continue
+            }
+            
+            // 尝试从云端获取或创建标签
+            if networkMonitor.isConnected && SupabaseConfig.shared.isConfigured {
+                do {
+                    let tag = try await databaseService.findOrCreateTag(name: tagName)
+                    tagIds.append(tag.id)
+                    
+                    // 添加到本地缓存
+                    if !availableTags.contains(where: { $0.id == tag.id }) {
+                        availableTags.append(tag)
+                    }
+                } catch {
+                    print("[HomeViewModel] Failed to find/create tag '\(tagName)': \(error)")
+                    // 创建临时本地标签
+                    let tempTag = Tag(name: tagName, sortOrder: availableTags.count)
+                    tagIds.append(tempTag.id)
+                }
+            } else {
+                // 离线模式：创建临时本地标签
+                let tempTag = Tag(name: tagName, sortOrder: availableTags.count)
+                tagIds.append(tempTag.id)
+            }
         }
+        
+        draft.tagIds = tagIds
+        print("[HomeViewModel] Associated \(tagIds.count) tags with draft")
     }
     
     // MARK: - 云端上传 (B-004, B-005)
@@ -419,17 +713,16 @@ final class HomeViewModel {
     private func finishSaveFlow() {
         isUploading = false
         uploadProgressText = ""
-        
-        // TODO: B-010 实现完整的保存逻辑
-        // 1. 生成 AI 总结
-        // 2. 生成标签
+        isGenerating = false
+        generationProgressText = ""
         
         // 切换回浏览模式
         currentMode = .browsing
         resetCreatingState()
         
-        // 重新加载日记列表
+        // 重新加载日记列表和标签
         loadDiariesForCurrentTag()
+        loadTags()  // F-005: 重新加载标签（可能有新标签）
         
         print("[HomeViewModel] Save flow completed")
     }
@@ -573,8 +866,18 @@ final class HomeViewModel {
                 },
                 onError: { [weak self] error in
                     // 处理错误
-                    self?.speechErrorMessage = error.localizedDescription
-                    self?.showErrorMessage(error.localizedDescription)
+                    let errorMsg = error.localizedDescription
+                    
+                    // 静默处理 "No speech detected" 错误
+                    if errorMsg.contains("No speech detected") || errorMsg.contains("没有检测到语音") {
+                        print("[HomeViewModel] Speech recognition ended without speech (ignored)")
+                        // 确保清除可能的旧错误，并且不显示弹窗
+                        self?.speechErrorMessage = nil
+                        return
+                    }
+                    
+                    self?.speechErrorMessage = errorMsg
+                    self?.showErrorMessage(errorMsg)
                     print("[HomeViewModel] Speech recognition error: \(error)")
                 }
             )
@@ -649,23 +952,35 @@ final class HomeViewModel {
         isSendingMessage = true
         isAITyping = true
         pendingRetryMessage = nil
+        suggestedPrompts = [] // 清除旧的建议
         
         do {
-            // 调用 AI 服务
+            // 调用 AI 服务（Best Friend Mode: 传递环境上下文）
             let response = try await aiService.chat(
                 messages: chatMessages,
                 analysisContext: currentAnalysis,
-                diaryId: draft.id
+                environmentContext: currentEnvironment,
+                diaryId: draft.id,
+                style: selectedStyle
             )
             
+            // 解析结构化响应（Best Friend Mode）
+            let parsed = AIChatResponse.parse(from: response)
+            
             // 添加 AI 回复
-            let aiMsg = ChatMessage(sender: .ai, content: response)
+            let aiMsg = ChatMessage(sender: .ai, content: parsed.assistantReply)
             chatMessages.append(aiMsg)
+            
+            // 更新建议话题（用于用户卡住时显示）
+            if let prompts = parsed.suggestedPrompts, !prompts.isEmpty {
+                suggestedPrompts = prompts
+                print("[HomeViewModel] Suggested prompts: \(prompts)")
+            }
             
             // 保存到本机
             updateDraftMessages()
             
-            print("[HomeViewModel] AI response received: \(response.prefix(50))...")
+            print("[HomeViewModel] AI response received: \(parsed.assistantReply.prefix(50))...")
             
         } catch {
             print("[HomeViewModel] AI chat failed: \(error)")
@@ -728,39 +1043,103 @@ final class HomeViewModel {
         }
     }
     
-    /// 触发 AI 分析并生成欢迎消息 (B-007, B-008)
-    /// F-003: 把媒体内容交给 AI 产生「它看到了什么」的理解
+    /// 触发即时欢迎消息 + 后台分析 + 环境获取 (B-007, B-008, B-010)
+    /// 策略：先立即响应用户（< 0.5s），后台静默分析和获取环境
     private func triggerInitialAIResponse(for mediaType: MediaType) {
+        // 1. 立即发送欢迎消息（不等待分析）
+        sendInstantWelcomeMessage(for: mediaType)
+        
+        // 2. 后台并行执行：AI 分析 + 环境获取
+        Task { @MainActor in
+            // 并行获取环境信息（不阻塞）
+            await fetchEnvironmentQuietly()
+        }
+        
+        // 3. 后台静默分析（如果有图片）
         guard let image = selectedMediaImage else {
-            // 没有媒体图片，使用默认欢迎消息
-            sendDefaultWelcomeMessage(for: mediaType)
+            print("[HomeViewModel] No image for background analysis")
             return
         }
         
-        // 开始 AI 分析
+        // 标记后台分析中（不显示 typing 动画）
         isAnalyzing = true
-        isAITyping = true
-        analysisProgressText = "正在分析媒体内容..."
+        analysisProgressText = ""  // 不显示进度，静默进行
         
         Task { @MainActor in
-            await performAIAnalysis(image: image, mediaType: mediaType)
+            await performBackgroundAnalysis(image: image, mediaType: mediaType)
         }
     }
     
-    /// 执行 AI 分析 (B-008)
+    /// 后台静默获取环境信息 (B-010)
     @MainActor
-    private func performAIAnalysis(image: UIImage, mediaType: MediaType) async {
-        print("[HomeViewModel] Starting AI analysis for \(mediaType.rawValue)")
+    private func fetchEnvironmentQuietly() async {
+        print("[HomeViewModel] 🌤️ Fetching environment context...")
+        isLoadingEnvironment = true
+        
+        // 使用新的 EnvironmentService API
+        // 如果已有数据则使用缓存，否则等待刷新
+        if environmentService.hasValidData, let context = environmentService.environmentContext {
+            currentEnvironment = context
+            isLoadingEnvironment = false
+            print("[HomeViewModel] 🌤️ Environment ready (cached): \(context.aiDescription)")
+            return
+        }
+        
+        // 等待环境服务刷新完成
+        await environmentService.refreshIfNeeded()
+        
+        if let context = environmentService.environmentContext {
+            currentEnvironment = context
+            print("[HomeViewModel] 🌤️ Environment ready: \(context.aiDescription)")
+        } else {
+            print("[HomeViewModel] ⚠️ Environment not available (location denied or failed)")
+        }
+        
+        isLoadingEnvironment = false
+    }
+    
+    /// 发送即时欢迎消息（< 0.5s 响应）(B-010 优化)
+    private func sendInstantWelcomeMessage(for mediaType: MediaType) {
+        isAITyping = false
+        
+        // B-010: 获取时间上下文（立即可用，不需要网络）
+        let timeContext = environmentService.getTimeContext()
+        let greeting = timeContext.timeInfo.period.greeting
+        
+        // 根据媒体类型 + 时间生成欢迎消息
+        let content: String
+        switch mediaType {
+        case .photo:
+            content = "\(greeting)这张照片看起来很有故事！想聊聊是在什么情况下拍的吗？"
+        case .video:
+            content = "\(greeting)这段视频记录了什么特别的时刻呢？我很想听你分享～"
+        }
+        
+        let welcomeMsg = ChatMessage(sender: .ai, content: content)
+        chatMessages.append(welcomeMsg)
+        updateDraftMessages()
+        
+        print("[HomeViewModel] ⚡ Instant welcome sent (< 0.5s): \(greeting)")
+    }
+    
+    /// 后台静默分析（不阻塞用户交互）(B-008)
+    @MainActor
+    private func performBackgroundAnalysis(image: UIImage, mediaType: MediaType) async {
+        print("[HomeViewModel] 🔄 Starting background analysis...")
+        let startTime = CFAbsoluteTimeGetCurrent()
         
         do {
             // 调用 AI 服务分析媒体
             let analysis = try await aiService.analyzeImage(
                 image,
                 mediaType: mediaType,
-                userContext: userInputText.isEmpty ? nil : userInputText
+                userContext: nil  // 后台分析不需要用户上下文
             )
             
-            // 保存分析结果
+            let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+            print("[HomeViewModel] ✅ Background analysis done in \(String(format: "%.1f", elapsed))s")
+            
+            // 保存分析结果（用于后续对话）
             currentAnalysis = analysis
             
             // 更新草稿的分析结果 (D-004)
@@ -770,37 +1149,71 @@ final class HomeViewModel {
                 draft.touch()
                 currentDraft = draft
                 
-                // 保存到本机
-                do {
-                    try draftManager.saveDraft(draft)
-                    print("[HomeViewModel] Analysis result saved to draft")
-                } catch {
-                    print("[HomeViewModel] Failed to save analysis to draft: \(error)")
-                }
+                // 静默保存到本机
+                try? draftManager.saveDraft(draft)
             }
             
-            // 分析完成，生成基于分析结果的欢迎消息
             isAnalyzing = false
-            analysisProgressText = ""
-            
-            sendAnalysisBasedWelcomeMessage(analysis: analysis, mediaType: mediaType)
-            
-            print("[HomeViewModel] AI analysis completed: \(analysis.description.prefix(50))...")
+            print("[HomeViewModel] 📝 Analysis saved:")
+            print("   描述: \(analysis.description)")
+            print("   标签: \(analysis.sceneTags?.joined(separator: ", ") ?? "无")")
+            print("   情绪: \(analysis.mood ?? "未知")")
+            print("   有人物: \(analysis.hasPeople == true ? "是" : "否")")
             
         } catch {
-            // 分析失败，使用默认欢迎消息
-            print("[HomeViewModel] AI analysis failed: \(error)")
+            // 分析失败，静默处理（不打扰用户）
+            print("[HomeViewModel] ⚠️ Background analysis failed: \(error)")
+            isAnalyzing = false
+            
+            // 记录错误但不显示给用户
+            if var draft = currentDraft {
+                draft.lastErrorMessage = "AI 分析失败：\(error.localizedDescription)"
+                currentDraft = draft
+            }
+        }
+    }
+    
+    /// 执行 AI 分析 (B-008) - 保留用于手动重试
+    @MainActor
+    private func performAIAnalysis(image: UIImage, mediaType: MediaType) async {
+        print("[HomeViewModel] Starting AI analysis for \(mediaType.rawValue)")
+        isAITyping = true
+        
+        do {
+            let analysis = try await aiService.analyzeImage(
+                image,
+                mediaType: mediaType,
+                userContext: userInputText.isEmpty ? nil : userInputText
+            )
+            
+            currentAnalysis = analysis
+            
+            if var draft = currentDraft {
+                draft.aiAnalysisResult = analysis.description
+                draft.isAnalyzed = true
+                draft.touch()
+                currentDraft = draft
+                try? draftManager.saveDraft(draft)
+            }
             
             isAnalyzing = false
             analysisProgressText = ""
+            isAITyping = false
             
-            // 记录错误到草稿
+            // 手动重试时，追加一条基于分析的消息
+            sendAnalysisBasedWelcomeMessage(analysis: analysis, mediaType: mediaType)
+            
+        } catch {
+            print("[HomeViewModel] AI analysis failed: \(error)")
+            isAnalyzing = false
+            analysisProgressText = ""
+            isAITyping = false
+            
             if var draft = currentDraft {
                 draft.lastErrorMessage = "AI 分析失败：\(error.localizedDescription)"
                 currentDraft = draft
             }
             
-            // 发送默认欢迎消息（降级处理）
             sendDefaultWelcomeMessage(for: mediaType, withError: true)
         }
     }
