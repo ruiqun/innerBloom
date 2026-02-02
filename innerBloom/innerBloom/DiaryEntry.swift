@@ -3,6 +3,8 @@
 //  innerBloom
 //
 //  日记条目数据模型 - D-001, D-002, D-005, D-006, D-009, D-003
+//  B-003: 添加 Codable 支持，用于本机草稿持久化
+//  B-004: 添加云端路径字段与同步状态管理
 //
 
 import Foundation
@@ -28,7 +30,7 @@ enum ChatSender: String, Codable {
 }
 
 /// 聊天消息模型 (D-003)
-struct ChatMessage: Identifiable, Codable {
+struct ChatMessage: Identifiable, Codable, Equatable {
     let id: UUID
     let sender: ChatSender
     let content: String
@@ -44,16 +46,20 @@ struct ChatMessage: Identifiable, Codable {
 
 /// 日记条目模型
 /// 对应 D-001：日记清单
-struct DiaryEntry: Identifiable {
+/// Codable 支持本机草稿持久化 (B-003)
+struct DiaryEntry: Identifiable, Codable, Equatable {
     let id: UUID
     var createdAt: Date
     var updatedAt: Date
     
-    // MARK: - 媒体相关 (D-001)
+    // MARK: - 媒体相关 (D-001, B-004)
     var mediaType: MediaType
-    var localMediaPath: String?  // 本机媒体路径
-    var cloudMediaPath: String?  // 云端媒体路径（Supabase Storage）
-    var thumbnailPath: String?   // 缩图路径
+    var localMediaPath: String?       // 本机媒体路径（相对路径）
+    var cloudMediaPath: String?       // 云端媒体路径（Supabase Storage bucket/path）
+    var cloudMediaURL: String?        // 云端媒体公开 URL
+    var thumbnailPath: String?        // 本机缩图路径（相对路径）
+    var cloudThumbnailPath: String?   // 云端缩图路径
+    var cloudThumbnailURL: String?    // 云端缩图公开 URL
     
     // MARK: - 使用者输入 (D-002)
     var userInputText: String?   // 使用者输入的文字/语音转文字
@@ -81,7 +87,8 @@ struct DiaryEntry: Identifiable {
         id: UUID = UUID(),
         createdAt: Date = Date(),
         mediaType: MediaType,
-        localMediaPath: String? = nil
+        localMediaPath: String? = nil,
+        thumbnailPath: String? = nil
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -89,7 +96,10 @@ struct DiaryEntry: Identifiable {
         self.mediaType = mediaType
         self.localMediaPath = localMediaPath
         self.cloudMediaPath = nil
-        self.thumbnailPath = nil
+        self.cloudMediaURL = nil
+        self.thumbnailPath = thumbnailPath
+        self.cloudThumbnailPath = nil
+        self.cloudThumbnailURL = nil
         self.userInputText = nil
         self.messages = []
         self.aiAnalysisResult = nil
@@ -103,6 +113,62 @@ struct DiaryEntry: Identifiable {
         
         // Debug: 日记创建日志
         print("[DiaryEntry] Created new entry: \(id), type: \(mediaType.rawValue)")
+    }
+    
+    // MARK: - Codable
+    
+    enum CodingKeys: String, CodingKey {
+        case id, createdAt, updatedAt
+        case mediaType, localMediaPath, cloudMediaPath, cloudMediaURL
+        case thumbnailPath, cloudThumbnailPath, cloudThumbnailURL
+        case userInputText, messages
+        case aiAnalysisResult, diarySummary
+        case tagIds
+        case isAnalyzed, isSummarized, isSaved, syncStatus, lastErrorMessage
+    }
+    
+    // MARK: - 更新时间
+    
+    /// 更新修改时间
+    mutating func touch() {
+        updatedAt = Date()
+    }
+    
+    // MARK: - 云端同步 (B-004)
+    
+    /// 更新云端媒体信息
+    mutating func updateCloudMedia(path: String, url: URL?) {
+        cloudMediaPath = path
+        cloudMediaURL = url?.absoluteString
+        touch()
+    }
+    
+    /// 更新云端缩略图信息
+    mutating func updateCloudThumbnail(path: String, url: URL?) {
+        cloudThumbnailPath = path
+        cloudThumbnailURL = url?.absoluteString
+        touch()
+    }
+    
+    /// 标记同步状态
+    mutating func markSyncing() {
+        syncStatus = .syncing
+        lastErrorMessage = nil
+        touch()
+    }
+    
+    /// 标记同步成功
+    mutating func markSynced() {
+        syncStatus = .synced
+        lastErrorMessage = nil
+        touch()
+    }
+    
+    /// 标记同步失败
+    mutating func markSyncFailed(_ error: String) {
+        syncStatus = .failed
+        lastErrorMessage = error
+        touch()
     }
 }
 
