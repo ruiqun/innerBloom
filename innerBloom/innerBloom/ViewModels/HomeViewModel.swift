@@ -295,31 +295,33 @@ final class HomeViewModel {
         do {
             // 如果选中「全部」标签，传 nil；否则传标签 ID
             let tagId = selectedTag.id.uuidString == "00000000-0000-0000-0000-000000000000" ? nil : selectedTag.id
-            var entries = try await databaseService.getDiaries(tagId: tagId)
+            let entries = try await databaseService.getDiaries(tagId: tagId)
             
-            // 开发模式：清理云端旧日记，只保留最新一条
-            if DevConfig.shouldCleanCloud && entries.count > 1 {
-                entries = await cleanOldCloudDiaries(entries)
-            }
-            
+            // 先显示日记列表（不阻塞 UI）
             diaryEntries = entries
             print("[HomeViewModel] Diaries loaded from cloud: \(entries.count)")
+            
+            // 开发模式：后台静默清理旧日记（不阻塞启动）
+            if DevConfig.shouldCleanCloud && entries.count > 1 {
+                Task.detached(priority: .background) { [weak self] in
+                    await self?.cleanOldCloudDiariesInBackground(entries)
+                }
+            }
         } catch {
             print("[HomeViewModel] Failed to load diaries: \(error)")
             diaryEntries = []
         }
     }
     
-    /// 开发模式：清理云端旧日记，只保留最新一条
-    @MainActor
-    private func cleanOldCloudDiaries(_ entries: [DiaryEntry]) async -> [DiaryEntry] {
-        print("[HomeViewModel] 🛠️ Dev mode: Cleaning old cloud diaries...")
+    /// 开发模式：后台静默清理云端旧日记（不阻塞 UI）
+    private func cleanOldCloudDiariesInBackground(_ entries: [DiaryEntry]) async {
+        print("[HomeViewModel] 🛠️ Dev mode: Background cleaning started...")
         
         // 按创建时间排序，最新的在前
         let sortedEntries = entries.sorted { $0.createdAt > $1.createdAt }
         
         guard let newestEntry = sortedEntries.first else {
-            return entries
+            return
         }
         
         // 收集需要保留的 tag IDs
@@ -340,19 +342,23 @@ final class HomeViewModel {
         }
         
         // 清理未使用的 tags
-        await cleanUnusedTags(keepTagIds: keepTagIds)
+        await cleanUnusedTagsInBackground(keepTagIds: keepTagIds)
         
         // 标记已清理
-        DevConfig.markCloudCleaned()
+        await MainActor.run {
+            DevConfig.markCloudCleaned()
+        }
         
-        print("[HomeViewModel] ✅ Dev mode: Cleaned \(deletedCount) old diaries, kept 1 newest")
+        print("[HomeViewModel] ✅ Dev mode: Background cleaning completed (\(deletedCount) diaries)")
         
-        return [newestEntry]
+        // 刷新 UI 列表（只保留最新一条）
+        await MainActor.run {
+            diaryEntries = [newestEntry]
+        }
     }
     
-    /// 清理未使用的 tags（保留必要的 tags）
-    @MainActor
-    private func cleanUnusedTags(keepTagIds: Set<UUID>) async {
+    /// 后台清理未使用的 tags
+    private func cleanUnusedTagsInBackground(keepTagIds: Set<UUID>) async {
         // 获取所有 tags
         guard let allTags = try? await databaseService.getTags() else { return }
         
@@ -377,8 +383,10 @@ final class HomeViewModel {
         
         if !tagsToDelete.isEmpty {
             print("[HomeViewModel] ✅ Cleaned \(tagsToDelete.count) unused tags")
-            // 重新加载 tags
-            await loadTagsFromCloud()
+            // 在 MainActor 上重新加载 tags
+            await MainActor.run {
+                loadTags()
+            }
         }
     }
     
@@ -461,104 +469,353 @@ final class HomeViewModel {
     }
     
     /// 结束保存 (F-005, B-004, B-008, B-010)
+    /// 采用 Optimistic UI + Background Processing 模式
+    /// 第一阶段：前台毫秒级响应
+    /// 第二阶段：后台静默处理
     func finishAndSave() {
-        print("[HomeViewModel] Finish and save triggered")
+        print("[HomeViewModel] ⚡ Save Memory triggered (Optimistic UI mode)")
         
         guard currentDraft != nil else {
             showErrorMessage("没有可保存的内容")
             return
         }
         
-        // 启动异步保存流程（包含 AI 生成）
-        Task {
-            await performFinishAndSave()
-        }
+        // ========== 第一阶段：前台立即响应（MainActor，毫秒级）==========
+        performImmediateUIUpdate()
     }
     
-    /// 执行完整的保存流程（F-005）
+    // MARK: - 第一阶段：前台立即响应（Optimistic UI）
+    
+    /// 前台立即响应：锁定快照 → 本地持久化 → UI 乐观更新 → 状态重置 → 关闭页面
     @MainActor
-    private func performFinishAndSave() async {
+    private func performImmediateUIUpdate() {
+        let startTime = CFAbsoluteTimeGetCurrent()
+        print("[HomeViewModel] 📍 Phase 1: Immediate UI update starting...")
+        
         guard var draft = currentDraft else { return }
         
-        // 1. 更新基本草稿数据
-        draft.userInputText = userInputText.isEmpty ? nil : userInputText
-        draft.messages = chatMessages
-        draft.isSaved = true
+        // 1️⃣ 锁定数据快照（Draft）
+        let snapshotTextInput = userInputText
+        let snapshotMessages = chatMessages
+        let snapshotAnalysis = currentAnalysis
+        let snapshotEnvironment = currentEnvironment
+        let snapshotStyle = selectedStyle
         
-        // B-008: 保存 AI 分析结果
-        if let analysis = currentAnalysis {
+        // 2️⃣ 更新草稿基本数据
+        draft.userInputText = snapshotTextInput.isEmpty ? nil : snapshotTextInput
+        draft.messages = snapshotMessages
+        draft.isSaved = true
+        draft.markProcessing()  // 标记为处理中
+        
+        // 保存 AI 分析结果（如果有）
+        if let analysis = snapshotAnalysis {
             draft.aiAnalysisResult = analysis.description
             draft.isAnalyzed = true
         }
         
         draft.touch()
-        currentDraft = draft
         
-        // 2. F-005: 生成 AI 总结和标签（如果有聊天记录）
-        if !chatMessages.isEmpty {
-            isGenerating = true
-            
-            // 2.1 生成日记总结
-            generationProgressText = "正在生成日记总结..."
-            do {
-                let result = try await aiService.generateSummary(
-                    messages: chatMessages,
-                    analysisContext: currentAnalysis,
-                    style: selectedStyle,
-                    environmentContext: currentEnvironment
-                )
-                draft.diarySummary = result.summary
-                draft.title = result.title
-                draft.style = selectedStyle.rawValue
-                draft.isSummarized = true
-                print("[HomeViewModel] Summary generated: \(result.summary.prefix(50))... Title: \(result.title)")
-            } catch {
-                print("[HomeViewModel] Summary generation failed: \(error)")
-                // 总结生成失败不阻断保存流程
-            }
-            
-            // 2.2 生成标签
-            generationProgressText = "正在生成标签..."
-            do {
-                // 获取已存在的标签名称（用于优先复用）
-                let existingTagNames = availableTags
-                    .filter { $0.id.uuidString != "00000000-0000-0000-0000-000000000000" } // 排除「全部」
-                    .map { $0.name }
-                
-                let tagNames = try await aiService.generateTags(
-                    messages: chatMessages,
-                    analysisContext: currentAnalysis,
-                    style: selectedStyle,
-                    existingTags: existingTagNames
-                )
-                generatedTagNames = tagNames
-                print("[HomeViewModel] Tags generated: \(tagNames) (existing: \(existingTagNames.count))")
-                
-                // 关联标签（创建或查找已有标签）
-                await associateTagsWithDraft(tagNames: tagNames, draft: &draft)
-            } catch {
-                print("[HomeViewModel] Tag generation failed: \(error)")
-                // 标签生成失败不阻断保存流程
-            }
-            
-            isGenerating = false
-            generationProgressText = ""
-        }
-        
-        // 3. 保存草稿到本机
+        // 3️⃣ 本地持久化（必须马上写盘）
         do {
             try draftManager.saveDraft(draft)
-            print("[HomeViewModel] Draft saved locally (summary: \(draft.isSummarized), tags: \(draft.tagIds.count))")
+            print("[HomeViewModel] ✅ Draft persisted to disk: \(draft.id)")
         } catch {
-            showErrorMessage("保存失败：\(error.localizedDescription)")
+            print("[HomeViewModel] ⚠️ Draft persistence failed: \(error)")
+            // 继续流程，不阻断用户
+        }
+        
+        // 4️⃣ UI 乐观更新：立刻插入到主页列表顶部
+        if !diaryEntries.contains(where: { $0.id == draft.id }) {
+            diaryEntries.insert(draft, at: 0)
+            print("[HomeViewModel] ✅ Entry inserted at top of list (processing state)")
+        } else {
+            // 更新已存在的条目
+            if let index = diaryEntries.firstIndex(where: { $0.id == draft.id }) {
+                diaryEntries[index] = draft
+            }
+        }
+        
+        // 5️⃣ 状态重置（创建页 UI 清空）
+        let savedDraftId = draft.id
+        resetCreatingState()
+        
+        // 6️⃣ 关闭页面（立即回浏览模式）
+        currentMode = .browsing
+        
+        let phase1Time = CFAbsoluteTimeGetCurrent() - startTime
+        print("[HomeViewModel] ⚡ Phase 1 completed in \(String(format: "%.0f", phase1Time * 1000))ms")
+        
+        // ========== 第二阶段：后台静默处理（Detached Task）==========
+        // 使用 Task.detached 确保不会阻塞 UI
+        Task.detached(priority: .userInitiated) { [weak self] in
+            await self?.performBackgroundProcessing(
+                draftId: savedDraftId,
+                messages: snapshotMessages,
+                analysis: snapshotAnalysis,
+                environment: snapshotEnvironment,
+                style: snapshotStyle
+            )
+        }
+    }
+    
+    // MARK: - 第二阶段：后台静默处理（Background Processing）
+    
+    /// 后台静默处理：AI 生成 → 云端上传 → 最终同步
+    private func performBackgroundProcessing(
+        draftId: UUID,
+        messages: [ChatMessage],
+        analysis: AIAnalysisResult?,
+        environment: EnvironmentContext?,
+        style: DiaryStyle
+    ) async {
+        let startTime = CFAbsoluteTimeGetCurrent()
+        print("[HomeViewModel] 🔄 Phase 2: Background processing starting for \(draftId)...")
+        
+        // 重新加载草稿（确保使用最新数据）- 在 MainActor 上执行
+        guard var draft = await MainActor.run(body: {
+            try? draftManager.loadDraft(id: draftId)
+        }) else {
+            print("[HomeViewModel] ⚠️ Failed to load draft for background processing")
             return
         }
         
-        // 更新当前草稿引用
-        currentDraft = draft
+        // 获取已存在的标签名称（用于优先复用）
+        let existingTagNames = await MainActor.run {
+            availableTags
+                .filter { $0.id.uuidString != "00000000-0000-0000-0000-000000000000" }
+                .map { $0.name }
+        }
         
-        // 4. 异步上传到云端 (B-004)
-        await uploadToCloud()
+        // ========== 3.1 AI 智能生成（后台）==========
+        if !messages.isEmpty {
+            await updateEntryInListAsync(draftId) { $0.markAIGenerating() }
+            
+            // 生成标题 + 总结
+            do {
+                let result = try await aiService.generateSummary(
+                    messages: messages,
+                    analysisContext: analysis,
+                    style: style,
+                    environmentContext: environment
+                )
+                draft.diarySummary = result.summary
+                draft.title = result.title
+                draft.style = style.rawValue
+                draft.isSummarized = true
+                print("[HomeViewModel] ✅ Summary generated: \(result.title)")
+            } catch {
+                print("[HomeViewModel] ⚠️ Summary generation failed: \(error)")
+                // 继续流程，不阻断
+            }
+            
+            // 生成标签
+            do {
+                let tagNames = try await aiService.generateTags(
+                    messages: messages,
+                    analysisContext: analysis,
+                    style: style,
+                    existingTags: existingTagNames
+                )
+                
+                // 关联标签
+                await associateTagsWithDraftBackground(tagNames: tagNames, draft: &draft)
+                print("[HomeViewModel] ✅ Tags generated: \(tagNames)")
+            } catch {
+                print("[HomeViewModel] ⚠️ Tag generation failed: \(error)")
+            }
+            
+            // 更新本地持久化
+            await MainActor.run {
+                try? draftManager.saveDraft(draft)
+            }
+            
+            // 更新 UI 列表中的条目（自动刷新标题/总结/标签）
+            let updatedDraft = draft
+            await updateEntryInListAsync(draftId) { entry in
+                entry.title = updatedDraft.title
+                entry.diarySummary = updatedDraft.diarySummary
+                entry.tagIds = updatedDraft.tagIds
+                entry.isSummarized = updatedDraft.isSummarized
+            }
+        }
+        
+        // ========== 3.2 云端静默上传（后台）==========
+        await updateEntryInListAsync(draftId) { $0.markUploading() }
+        
+        let uploadSuccess = await uploadToCloudSilently(draft: &draft)
+        
+        // ========== 3.3 最终同步 ==========
+        if uploadSuccess {
+            draft.markSynced()
+            draft.markProcessingCompleted()
+            print("[HomeViewModel] ✅ Cloud sync completed")
+        } else {
+            draft.markProcessingFailed(draft.lastErrorMessage ?? "上传失败")
+            print("[HomeViewModel] ⚠️ Cloud sync failed (can retry later)")
+        }
+        
+        // 最终写盘保存
+        await MainActor.run {
+            try? draftManager.saveDraft(draft)
+        }
+        
+        // 更新 UI 列表中的条目（清除处理中遮罩）
+        let finalDraft = draft
+        await updateEntryInListAsync(draftId) { entry in
+            entry = finalDraft
+        }
+        
+        // 刷新标签列表（可能有新标签）
+        await MainActor.run {
+            loadTags()
+        }
+        
+        let phase2Time = CFAbsoluteTimeGetCurrent() - startTime
+        print("[HomeViewModel] ✅ Phase 2 completed in \(String(format: "%.1f", phase2Time))s")
+    }
+    
+    /// 后台关联标签（不使用 MainActor）
+    private func associateTagsWithDraftBackground(tagNames: [String], draft: inout DiaryEntry) async {
+        var tagIds: [UUID] = []
+        
+        for tagName in tagNames {
+            // 先检查本地是否有同名标签
+            let existingTag = await MainActor.run {
+                availableTags.first(where: { $0.name == tagName })
+            }
+            
+            if let existingTag = existingTag {
+                tagIds.append(existingTag.id)
+                continue
+            }
+            
+            // 尝试从云端获取或创建标签
+            if networkMonitor.isConnected && SupabaseConfig.shared.isConfigured {
+                do {
+                    let tag = try await databaseService.findOrCreateTag(name: tagName)
+                    tagIds.append(tag.id)
+                    
+                    // 添加到本地缓存
+                    await MainActor.run {
+                        if !availableTags.contains(where: { $0.id == tag.id }) {
+                            availableTags.append(tag)
+                        }
+                    }
+                } catch {
+                    print("[HomeViewModel] Failed to find/create tag '\(tagName)': \(error)")
+                    let tempTag = Tag(name: tagName, sortOrder: 100)
+                    tagIds.append(tempTag.id)
+                }
+            } else {
+                let tempTag = Tag(name: tagName, sortOrder: 100)
+                tagIds.append(tempTag.id)
+            }
+        }
+        
+        draft.tagIds = tagIds
+    }
+    
+    /// 静默更新列表中的条目（异步版本，用于后台调用）
+    private func updateEntryInListAsync(_ id: UUID, update: @escaping (inout DiaryEntry) -> Void) async {
+        await MainActor.run {
+            if let index = diaryEntries.firstIndex(where: { $0.id == id }) {
+                update(&diaryEntries[index])
+            }
+        }
+    }
+    
+    /// 静默更新列表中的条目（同步版本，仅在 MainActor 上调用）
+    @MainActor
+    private func updateEntryInList(_ id: UUID, update: (inout DiaryEntry) -> Void) {
+        if let index = diaryEntries.firstIndex(where: { $0.id == id }) {
+            update(&diaryEntries[index])
+        }
+    }
+    
+    /// 静默上传到云端（不显示 loading，不弹窗）
+    private func uploadToCloudSilently(draft: inout DiaryEntry) async -> Bool {
+        print("[HomeViewModel] 🔄 Silent cloud upload starting...")
+        
+        // 检查网络状态
+        guard networkMonitor.isConnected else {
+            print("[HomeViewModel] ⚠️ Offline, skipping cloud upload")
+            draft.markSyncFailed("无网络连接，已保存到本机")
+            return false
+        }
+        
+        // 检查 Supabase 配置
+        guard SupabaseConfig.shared.isConfigured else {
+            print("[HomeViewModel] ⚠️ Supabase not configured, skipping upload")
+            draft.markSyncFailed("云端服务未配置")
+            return false
+        }
+        
+        draft.markSyncing()
+        var uploadSuccess = true
+        
+        // 1️⃣ 上传媒体和缩略图到 Storage
+        let result = await storageService.uploadMediaWithThumbnail(
+            localMediaPath: draft.localMediaPath ?? "",
+            localThumbnailPath: draft.thumbnailPath,
+            diaryId: draft.id,
+            mediaType: draft.mediaType
+        )
+        
+        if let mediaResult = result.mediaResult {
+            draft.updateCloudMedia(path: mediaResult.path, url: mediaResult.publicURL)
+            print("[HomeViewModel] ✅ Media uploaded: \(mediaResult.path)")
+        } else if !result.errors.isEmpty {
+            uploadSuccess = false
+        }
+        
+        if let thumbResult = result.thumbnailResult {
+            draft.updateCloudThumbnail(path: thumbResult.path, url: thumbResult.publicURL)
+        }
+        
+        // 2️⃣ 保存日记到数据库
+        do {
+            // 保留原来的 tagIds 和 messages（upsert 可能不返回）
+            let originalTagIds = draft.tagIds
+            let originalMessages = draft.messages
+            
+            let savedDiary = try await databaseService.upsertDiary(draft)
+            draft = savedDiary
+            
+            // 恢复 tagIds 和 messages（如果 upsert 没有返回）
+            if draft.tagIds.isEmpty && !originalTagIds.isEmpty {
+                draft.tagIds = originalTagIds
+            }
+            if draft.messages.isEmpty && !originalMessages.isEmpty {
+                draft.messages = originalMessages
+            }
+            print("[HomeViewModel] ✅ Diary saved to database")
+            
+            // 3️⃣ 保存聊天消息
+            if !draft.messages.isEmpty {
+                try await databaseService.saveMessages(draft.messages, for: draft.id)
+                print("[HomeViewModel] ✅ Messages saved to database")
+            }
+            
+            // 4️⃣ 保存标签关联
+            if !draft.tagIds.isEmpty {
+                try await databaseService.saveDiaryTags(diaryId: draft.id, tagIds: draft.tagIds)
+                print("[HomeViewModel] ✅ Tags saved to database")
+            }
+            
+        } catch {
+            print("[HomeViewModel] ⚠️ Database save failed: \(error)")
+            draft.markSyncFailed(error.localizedDescription)
+            uploadSuccess = false
+        }
+        
+        return uploadSuccess
+    }
+    
+    /// 执行完整的保存流程（F-005）- 保留用于兼容
+    @MainActor
+    private func performFinishAndSave() async {
+        // 新实现使用 performImmediateUIUpdate()
+        performImmediateUIUpdate()
     }
     
     /// 将生成的标签名称关联到草稿（F-005）
@@ -602,7 +859,8 @@ final class HomeViewModel {
     
     // MARK: - 云端上传 (B-004, B-005)
     
-    /// 上传媒体到 Supabase Storage 并保存到数据库
+    /// 上传媒体到 Supabase Storage 并保存到数据库（旧版，保留兼容）
+    /// 注意：新的保存流程使用 `uploadToCloudSilently` 静默上传
     @MainActor
     private func uploadToCloud() async {
         guard var draft = currentDraft else { return }
@@ -631,54 +889,8 @@ final class HomeViewModel {
         draft.markSyncing()
         saveDraftQuietly(draft)
         
-        var uploadSuccess = true
-        
-        // 1. 上传媒体和缩略图到 Storage
-        let result = await storageService.uploadMediaWithThumbnail(
-            localMediaPath: draft.localMediaPath ?? "",
-            localThumbnailPath: draft.thumbnailPath,
-            diaryId: draft.id,
-            mediaType: draft.mediaType
-        )
-        
-        // 处理上传结果
-        if let mediaResult = result.mediaResult {
-            draft.updateCloudMedia(path: mediaResult.path, url: mediaResult.publicURL)
-            print("[HomeViewModel] Media uploaded: \(mediaResult.path)")
-        } else if !result.errors.isEmpty {
-            uploadSuccess = false
-        }
-        
-        if let thumbResult = result.thumbnailResult {
-            draft.updateCloudThumbnail(path: thumbResult.path, url: thumbResult.publicURL)
-            print("[HomeViewModel] Thumbnail uploaded: \(thumbResult.path)")
-        }
-        
-        // 2. 保存日记到数据库 (B-005)
-        uploadProgressText = "正在保存日记..."
-        
-        do {
-            let savedDiary = try await databaseService.upsertDiary(draft)
-            draft = savedDiary
-            print("[HomeViewModel] Diary saved to database")
-            
-            // 3. 保存聊天消息到数据库
-            if !draft.messages.isEmpty {
-                uploadProgressText = "正在保存消息..."
-                try await databaseService.saveMessages(draft.messages, for: draft.id)
-                print("[HomeViewModel] Messages saved to database")
-            }
-            
-            // 4. 保存标签关联（如果有标签）
-            if !draft.tagIds.isEmpty {
-                try await databaseService.saveDiaryTags(diaryId: draft.id, tagIds: draft.tagIds)
-                print("[HomeViewModel] Tags saved to database")
-            }
-            
-        } catch {
-            print("[HomeViewModel] Failed to save to database: \(error)")
-            uploadSuccess = false
-        }
+        // 使用静默上传方法
+        let uploadSuccess = await uploadToCloudSilently(draft: &draft)
         
         // 更新同步状态
         if uploadSuccess {
@@ -686,10 +898,8 @@ final class HomeViewModel {
             uploadProgressText = "保存完成"
             print("[HomeViewModel] Cloud sync completed")
         } else {
-            let errorMsg = result.errors.first?.localizedDescription ?? "保存失败"
-            draft.markSyncFailed(errorMsg)
             uploadProgressText = "部分保存失败"
-            print("[HomeViewModel] Cloud sync partial failure: \(errorMsg)")
+            print("[HomeViewModel] Cloud sync partial failure")
         }
         
         // 保存最终状态到本机
@@ -727,14 +937,54 @@ final class HomeViewModel {
         print("[HomeViewModel] Save flow completed")
     }
     
-    /// 手动重试云端同步
+    /// 手动重试云端同步（用于同步失败的日记）
+    func retryCloudSync(for entryId: UUID) {
+        print("[HomeViewModel] 🔄 Retrying cloud sync for: \(entryId)")
+        
+        Task { [weak self] in
+            guard let self = self else { return }
+            
+            // 在 MainActor 上加载草稿
+            guard var draft = await MainActor.run(body: {
+                try? self.draftManager.loadDraft(id: entryId)
+            }) else {
+                print("[HomeViewModel] ⚠️ Failed to load draft for retry")
+                return
+            }
+            
+            guard draft.syncStatus == .failed || draft.processingState == .failed else {
+                print("[HomeViewModel] ⚠️ Entry is not in failed state")
+                return
+            }
+            
+            // 重置状态
+            draft.processingState = .uploading
+            draft.lastErrorMessage = nil
+            await self.updateEntryInListAsync(entryId) { $0.processingState = .uploading }
+            
+            // 重试上传
+            let success = await self.uploadToCloudSilently(draft: &draft)
+            
+            if success {
+                draft.markSynced()
+                draft.markProcessingCompleted()
+            } else {
+                draft.markProcessingFailed(draft.lastErrorMessage ?? "上传失败")
+            }
+            
+            let finalDraft = draft
+            await MainActor.run {
+                try? self.draftManager.saveDraft(finalDraft)
+            }
+            await self.updateEntryInListAsync(entryId) { $0 = finalDraft }
+        }
+    }
+    
+    /// 旧版重试方法（兼容）
     func retryCloudSync() {
         guard let draft = currentDraft else { return }
         guard draft.syncStatus == .failed else { return }
-        
-        Task {
-            await uploadToCloud()
-        }
+        retryCloudSync(for: draft.id)
     }
     
     // MARK: - 媒体选择 (F-001, B-003)

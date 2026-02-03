@@ -72,6 +72,8 @@ struct DiaryListView: View {
             ForEach(entries) { entry in
                 DiaryListItemView(entry: entry)
                     .onTapGesture {
+                        // 处理中的条目不允许点击进入
+                        guard !entry.processingState.isProcessing else { return }
                         onTapEntry(entry)
                     }
             }
@@ -84,7 +86,34 @@ struct DiaryListItemView: View {
     
     let entry: DiaryEntry
     
+    /// 是否正在处理中
+    private var isProcessing: Bool {
+        entry.processingState.isProcessing
+    }
+    
+    /// 是否处理失败（可重试）
+    private var isFailed: Bool {
+        entry.processingState == .failed || entry.syncStatus == .failed
+    }
+    
     var body: some View {
+        ZStack {
+            // 主内容
+            mainContent
+            
+            // 处理中遮罩
+            if isProcessing {
+                processingOverlay
+            }
+            
+            // 失败状态指示器
+            if isFailed && !isProcessing {
+                failedIndicator
+            }
+        }
+    }
+    
+    private var mainContent: some View {
         HStack(spacing: 16) {
             // 缩图区域
             thumbnailView
@@ -100,6 +129,12 @@ struct DiaryListItemView: View {
                         .font(.headline)
                         .foregroundColor(Theme.textPrimary)
                         .lineLimit(1)
+                } else if isProcessing {
+                    // 处理中显示占位标题
+                    Text("正在生成标题...")
+                        .font(.headline)
+                        .foregroundColor(Theme.textSecondary.opacity(0.6))
+                        .lineLimit(1)
                 }
                 
                 if let summary = entry.displaySummary {
@@ -107,6 +142,12 @@ struct DiaryListItemView: View {
                         .font(.subheadline)
                         .lineLimit(2)
                         .foregroundColor(entry.title == nil ? Theme.textPrimary : Theme.textSecondary)
+                } else if isProcessing {
+                    // 处理中显示占位摘要
+                    Text("AI 正在为你生成日记摘要...")
+                        .font(.subheadline)
+                        .foregroundColor(Theme.textSecondary.opacity(0.5))
+                        .lineLimit(2)
                 } else {
                     Text("无内容")
                         .font(.subheadline)
@@ -116,9 +157,16 @@ struct DiaryListItemView: View {
             
             Spacer()
             
-            Image(systemName: "chevron.right")
-                .font(.caption)
-                .foregroundColor(Theme.textSecondary.opacity(0.5))
+            if isProcessing {
+                // 处理中显示加载指示器
+                ProgressView()
+                    .tint(Theme.accent)
+                    .scaleEffect(0.8)
+            } else {
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundColor(Theme.textSecondary.opacity(0.5))
+            }
         }
         .padding(16)
         .background(
@@ -127,8 +175,57 @@ struct DiaryListItemView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 16)
-                .stroke(Color.white.opacity(0.05), lineWidth: 0.5)
+                .stroke(isProcessing ? Theme.accent.opacity(0.3) : Color.white.opacity(0.05), lineWidth: isProcessing ? 1 : 0.5)
         )
+        .opacity(isProcessing ? 0.8 : 1.0)
+    }
+    
+    /// 处理中遮罩
+    private var processingOverlay: some View {
+        RoundedRectangle(cornerRadius: 16)
+            .fill(Color.black.opacity(0.3))
+            .overlay(
+                VStack(spacing: 8) {
+                    Text(processingStateText)
+                        .font(.caption)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule()
+                                .fill(Theme.accent.opacity(0.8))
+                        )
+                }
+            )
+            .allowsHitTesting(false)
+    }
+    
+    /// 失败状态指示器
+    private var failedIndicator: some View {
+        VStack {
+            HStack {
+                Spacer()
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+                    .padding(8)
+            }
+            Spacer()
+        }
+    }
+    
+    /// 处理状态文字
+    private var processingStateText: String {
+        switch entry.processingState {
+        case .processing:
+            return "处理中..."
+        case .aiGenerating:
+            return "AI 生成中..."
+        case .uploading:
+            return "上传中..."
+        default:
+            return "处理中..."
+        }
     }
     
     private var thumbnailView: some View {

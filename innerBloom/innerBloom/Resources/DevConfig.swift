@@ -14,17 +14,17 @@ struct DevConfig {
     
     /// 开发模式开关
     /// 打开时：每次启动 App 只保留最新一条数据，清理其余数据
-    static let isDevelopmentMode: Bool = true
+    static let isDevelopmentMode: Bool = false
     
     /// 是否清理旧草稿（仅在开发模式下生效）
-    static let cleanOldDrafts: Bool = true
+    static let cleanOldDrafts: Bool = false
     
     /// 是否清理云端旧日记（仅在开发模式下生效）
     /// ⚠️ 危险：会删除 Supabase 中的日记数据！
-    static let cleanCloudDiaries: Bool = true
+    static let cleanCloudDiaries: Bool = false
     
     /// 是否打印详细日志
-    static let verboseLogging: Bool = true
+    static let verboseLogging: Bool = false
     
     /// 是否已执行过云端清理（避免重复清理）
     private static var hasCleanedCloud = false

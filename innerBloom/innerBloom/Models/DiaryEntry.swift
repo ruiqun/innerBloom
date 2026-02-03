@@ -23,6 +23,25 @@ enum SyncStatus: String, Codable {
     case failed     // 同步失败
 }
 
+/// 日记处理状态（用于 Optimistic UI）
+enum ProcessingState: String, Codable {
+    case idle           // 空闲/完成
+    case processing     // 处理中（AI 生成 + 上传）
+    case aiGenerating   // AI 正在生成总结/标签
+    case uploading      // 正在上传到云端
+    case completed      // 处理完成
+    case failed         // 处理失败（可重试）
+    
+    var isProcessing: Bool {
+        switch self {
+        case .processing, .aiGenerating, .uploading:
+            return true
+        case .idle, .completed, .failed:
+            return false
+        }
+    }
+}
+
 /// 聊天消息发送者
 enum ChatSender: String, Codable {
     case user
@@ -87,6 +106,9 @@ struct DiaryEntry: Identifiable, Codable, Equatable {
     var syncStatus: SyncStatus  // 云端同步状态
     var lastErrorMessage: String?
     
+    // MARK: - 处理状态（Optimistic UI）
+    var processingState: ProcessingState = .idle  // 后台处理状态
+    
     // MARK: - 初始化
     
     init(
@@ -118,6 +140,7 @@ struct DiaryEntry: Identifiable, Codable, Equatable {
         self.isSaved = false
         self.syncStatus = .local
         self.lastErrorMessage = nil
+        self.processingState = .idle
         
         // Debug: 日记创建日志
         print("[DiaryEntry] Created new entry: \(id), type: \(mediaType.rawValue)")
@@ -134,6 +157,7 @@ struct DiaryEntry: Identifiable, Codable, Equatable {
         case aiAnalysisResult, diarySummary
         case tagIds
         case isAnalyzed, isSummarized, isSaved, syncStatus, lastErrorMessage
+        case processingState
     }
     
     // MARK: - 更新时间
@@ -178,6 +202,44 @@ struct DiaryEntry: Identifiable, Codable, Equatable {
         syncStatus = .failed
         lastErrorMessage = error
         touch()
+    }
+    
+    // MARK: - 处理状态（Optimistic UI）
+    
+    /// 标记为处理中
+    mutating func markProcessing() {
+        processingState = .processing
+        touch()
+    }
+    
+    /// 标记为 AI 生成中
+    mutating func markAIGenerating() {
+        processingState = .aiGenerating
+        touch()
+    }
+    
+    /// 标记为上传中
+    mutating func markUploading() {
+        processingState = .uploading
+        touch()
+    }
+    
+    /// 标记处理完成
+    mutating func markProcessingCompleted() {
+        processingState = .completed
+        touch()
+    }
+    
+    /// 标记处理失败（可重试）
+    mutating func markProcessingFailed(_ error: String) {
+        processingState = .failed
+        lastErrorMessage = error
+        touch()
+    }
+    
+    /// 重置处理状态为空闲
+    mutating func resetProcessingState() {
+        processingState = .idle
     }
 }
 

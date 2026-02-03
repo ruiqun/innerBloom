@@ -27,10 +27,11 @@ struct DiaryDetailView: View {
             // 背景
             Theme.background.ignoresSafeArea()
             
-            ScrollView {
-                VStack(spacing: 0) {
-                    // 1. 媒体展示区 (占主要视觉)
-                    mediaHeaderView(height: UIScreen.main.bounds.width * 1.2)
+            GeometryReader { geometry in
+                ScrollView {
+                    VStack(spacing: 0) {
+                        // 1. 媒体展示区 (占主要视觉)
+                        mediaHeaderView(height: geometry.size.width * 1.2, screenWidth: geometry.size.width)
                     
                     // 2. 内容区域
                     VStack(alignment: .leading, spacing: 24) {
@@ -71,8 +72,7 @@ struct DiaryDetailView: View {
                     .padding(.top, 24)
                 }
             }
-            // 移除 GeometryReader 后，ZStack 默认会 Respect Safe Area (除非内容 ignore)
-            // ScrollView 默认也是 Respect Safe Area 的
+            }  // GeometryReader 结束
             
             // 顶部导航栏 (透明背景)
             customNavBar
@@ -92,7 +92,7 @@ struct DiaryDetailView: View {
     // MARK: - Subviews
     
     /// 媒体头部视图
-    private func mediaHeaderView(height: CGFloat) -> some View {
+    private func mediaHeaderView(height: CGFloat, screenWidth: CGFloat) -> some View {
         ZStack(alignment: .bottom) {
             // 媒体内容
             Group {
@@ -129,7 +129,7 @@ struct DiaryDetailView: View {
                         )
                 }
             }
-            .frame(width: UIScreen.main.bounds.width, height: height)
+            .frame(width: screenWidth, height: height)
             .clipped()
             
             // 渐变遮罩 (让底部文字清晰)
