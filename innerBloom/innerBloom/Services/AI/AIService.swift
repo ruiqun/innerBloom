@@ -171,6 +171,7 @@ struct AIChatPreferences: Codable {
 }
 
 // MARK: - 日记风格
+/// B-016: DiaryStyle 保留向前兼容，新代码应使用 AIToneStyle
 enum DiaryStyle: String, CaseIterable, Codable {
     case warm = "warm"          // 温暖治愈
     case minimal = "minimal"    // 极简客观
@@ -192,6 +193,18 @@ enum DiaryStyle: String, CaseIterable, Codable {
             return "请用简洁、客观、理性的语气。多关注事实描述，像一个专业的记录者，不要过多的修饰词。"
         case .humorous:
             return "请用幽默、风趣、轻松的语气。可以适度调侃，像一个有趣的朋友，让对话充满快乐。"
+        }
+    }
+    
+    /// B-016: 从 AIToneStyle 转换
+    init(from toneStyle: AIToneStyle) {
+        switch toneStyle {
+        case .warm, .empathetic:
+            self = .warm
+        case .minimal:
+            self = .minimal
+        case .humorous:
+            self = .humorous
         }
     }
 }
@@ -745,7 +758,11 @@ final class AIService: AIServiceProtocol {
         style: DiaryStyle? = nil,
         environmentContext: EnvironmentContext? = nil
     ) async throws -> (summary: String, title: String) {
-        print("[AIService] Generating summary with OpenAI")
+        // B-016: 从 SettingsManager 获取用户偏好的 AI 风格
+        let userToneStyle = SettingsManager.shared.aiToneStyle
+        
+        print("[AIService] 📝 Generating summary with OpenAI")
+        print("[AIService] 🎨 User tone style: \(userToneStyle.displayName)")
         
         // 构建对话内容
         let conversationText = messages
@@ -778,9 +795,13 @@ final class AIService: AIServiceProtocol {
         返回 JSON：{"summary": "日记内容", "title": "日记标题"}
         """
         
-        if let style = style {
-            systemPrompt += "\n\n风格要求：\(style.systemPromptInstruction)"
-        }
+        // B-016: 使用用户设定的 AI 口吻风格
+        systemPrompt += "\n\n风格要求：\(userToneStyle.systemPromptInstruction)"
+        
+        // B-016: 调试日志 - 打印总结生成的系统提示词
+        print("[AIService] 📝 ========== Summary System Prompt Start ==========")
+        print(systemPrompt)
+        print("[AIService] 📝 ========== Summary System Prompt End ==========")
         
         // 用户提示
         var userPrompt = "以下是用户与 AI 的对话记录：\n\n\(conversationText)\n\n"
@@ -839,7 +860,11 @@ final class AIService: AIServiceProtocol {
         style: DiaryStyle? = nil,
         existingTags: [String] = []
     ) async throws -> [String] {
-        print("[AIService] Generating tags with OpenAI, existing: \(existingTags.count)")
+        // B-016: 从 SettingsManager 获取用户偏好的 AI 风格
+        let userToneStyle = SettingsManager.shared.aiToneStyle
+        
+        print("[AIService] 🏷️ Generating tags with OpenAI, existing: \(existingTags.count)")
+        print("[AIService] 🎨 User tone style: \(userToneStyle.displayName)")
         
         // 系统提示
         var systemPrompt = """
@@ -862,17 +887,14 @@ final class AIService: AIServiceProtocol {
             """
         }
         
-        if let style = style {
-            let styleNum = existingTags.isEmpty ? 5 : 6
-            switch style {
-            case .warm:
-                systemPrompt += "\n\(styleNum). 标签风格：温暖、感性、治愈"
-            case .minimal:
-                systemPrompt += "\n\(styleNum). 标签风格：简洁、客观、名词为主"
-            case .humorous:
-                systemPrompt += "\n\(styleNum). 标签风格：有趣、生动、带点幽默感"
-            }
-        }
+        // B-016: 使用用户设定的标签风格
+        let styleNum = existingTags.isEmpty ? 5 : 6
+        systemPrompt += "\n\(styleNum). 标签风格：\(userToneStyle.tagStyleDescription)"
+        
+        // B-016: 调试日志 - 打印标签生成的系统提示词
+        print("[AIService] 🏷️ ========== Tags System Prompt Start ==========")
+        print(systemPrompt)
+        print("[AIService] 🏷️ ========== Tags System Prompt End ==========")
         
         // 构建用户提示
         var userPrompt = ""
@@ -1108,7 +1130,13 @@ final class AIService: AIServiceProtocol {
         environmentContext: EnvironmentContext? = nil,
         style: DiaryStyle? = nil
     ) async throws -> String {
-        print("[AIService] Chatting with OpenAI (Best Friend Mode), style: \(style?.rawValue ?? "default")")
+        // B-016: 从 SettingsManager 获取用户偏好的 AI 风格
+        let userToneStyle = SettingsManager.shared.aiToneStyle
+        let effectiveStyle = style ?? DiaryStyle(from: userToneStyle)
+        
+        print("[AIService] 🎨 Chatting with OpenAI (Best Friend Mode)")
+        print("[AIService] 🎨 User tone style: \(userToneStyle.displayName)")
+        print("[AIService] 🎨 Effective diary style: \(effectiveStyle.displayName)")
         
         // 构建"最懂你的好朋友"系统提示
         var systemPrompt = buildBestFriendPrompt(
@@ -1116,10 +1144,8 @@ final class AIService: AIServiceProtocol {
             hasEnvironment: environmentContext?.hasValidInfo == true
         )
         
-        // 添加风格特定的提示
-        if let style = style {
-            systemPrompt += "\n\n## 风格要求\n\(style.systemPromptInstruction)"
-        }
+        // B-016: 使用用户设定的 AI 口吻风格
+        systemPrompt += "\n\n## 风格要求\n\(userToneStyle.systemPromptInstruction)"
         
         // 构建上下文信息
         var contextParts: [String] = []
@@ -1152,6 +1178,11 @@ final class AIService: AIServiceProtocol {
         if !contextParts.isEmpty {
             fullPrompt += "\n\n---\n可用上下文（按需使用，没有的不要编造）：\n" + contextParts.joined(separator: "\n")
         }
+        
+        // B-016: 调试日志 - 打印完整系统提示词
+        print("[AIService] 📝 ========== System Prompt Start ==========")
+        print(fullPrompt)
+        print("[AIService] 📝 ========== System Prompt End ==========")
         
         // 转换消息格式
         var openAIMessages: [OpenAIMessage] = []

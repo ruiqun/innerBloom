@@ -3,6 +3,8 @@
 //  innerBloom
 //
 //  日记列表组件 - F-006
+//  B-015: 添加同步失败重试支持
+//  B-017: 多语言支持
 //  Style: Cinematic Dark
 //
 
@@ -14,6 +16,21 @@ struct DiaryListView: View {
     let currentTagName: String
     let isLoading: Bool
     let onTapEntry: (DiaryEntry) -> Void
+    let onRetry: ((DiaryEntry) -> Void)?  // B-015: 重试回调
+    
+    init(
+        entries: [DiaryEntry],
+        currentTagName: String,
+        isLoading: Bool,
+        onTapEntry: @escaping (DiaryEntry) -> Void,
+        onRetry: ((DiaryEntry) -> Void)? = nil
+    ) {
+        self.entries = entries
+        self.currentTagName = currentTagName
+        self.isLoading = isLoading
+        self.onTapEntry = onTapEntry
+        self.onRetry = onRetry
+    }
     
     var body: some View {
         Group {
@@ -27,38 +44,40 @@ struct DiaryListView: View {
         }
     }
     
+    /// B-017: 支持多语言
     private var loadingView: some View {
         VStack(spacing: 12) {
             ProgressView()
                 .tint(Theme.textSecondary)
-            Text("加载中...")
+            Text(String.localized(.loading))
                 .font(.subheadline)
                 .foregroundColor(Theme.textSecondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     
+    /// B-017: 支持多语言
     private var emptyStateView: some View {
         VStack(spacing: 16) {
             Image(systemName: "doc.text.image")
                 .font(.system(size: 60))
                 .foregroundColor(Theme.textSecondary.opacity(0.3))
             
-            if currentTagName == "全部" {
-                Text("目前还没有日记")
+            if currentTagName == String.localized(.all) || currentTagName == "全部" {
+                Text(String.localized(.noDiaryYet))
                     .font(.headline)
                     .foregroundColor(Theme.textSecondary)
                 
-                Text("向左滑动开始记录你的第一篇日记")
+                Text(String.localized(.swipeLeftToCreate))
                     .font(.subheadline)
                     .foregroundColor(Theme.textSecondary.opacity(0.7))
                     .multilineTextAlignment(.center)
             } else {
-                Text("「\(currentTagName)」还没有日记")
+                Text("「\(currentTagName)」")
                     .font(.headline)
                     .foregroundColor(Theme.textSecondary)
                 
-                Text("这个分类还没有日记")
+                Text(String.localized(.noDiaryInCategory))
                     .font(.subheadline)
                     .foregroundColor(Theme.textSecondary.opacity(0.7))
             }
@@ -70,12 +89,15 @@ struct DiaryListView: View {
     private var diaryListContent: some View {
         LazyVStack(spacing: 16) {
             ForEach(entries) { entry in
-                DiaryListItemView(entry: entry)
-                    .onTapGesture {
-                        // 处理中的条目不允许点击进入
-                        guard !entry.processingState.isProcessing else { return }
-                        onTapEntry(entry)
-                    }
+                DiaryListItemView(
+                    entry: entry,
+                    onRetry: onRetry  // B-015: 传递重试回调
+                )
+                .onTapGesture {
+                    // 处理中的条目不允许点击进入
+                    guard !entry.processingState.isProcessing else { return }
+                    onTapEntry(entry)
+                }
             }
         }
         .padding(.horizontal, 24)
@@ -85,6 +107,12 @@ struct DiaryListView: View {
 struct DiaryListItemView: View {
     
     let entry: DiaryEntry
+    let onRetry: ((DiaryEntry) -> Void)?  // B-015: 重试回调
+    
+    init(entry: DiaryEntry, onRetry: ((DiaryEntry) -> Void)? = nil) {
+        self.entry = entry
+        self.onRetry = onRetry
+    }
     
     /// 是否正在处理中
     private var isProcessing: Bool {
@@ -106,9 +134,9 @@ struct DiaryListItemView: View {
                 processingOverlay
             }
             
-            // 失败状态指示器
+            // B-015: 失败状态遮罩（带重试按钮）
             if isFailed && !isProcessing {
-                failedIndicator
+                failedOverlay
             }
         }
     }
@@ -124,6 +152,7 @@ struct DiaryListItemView: View {
                     .font(.caption)
                     .foregroundColor(Theme.textSecondary)
                 
+                // B-017: 支持多语言
                 if let title = entry.title {
                     Text(title)
                         .font(.headline)
@@ -131,7 +160,7 @@ struct DiaryListItemView: View {
                         .lineLimit(1)
                 } else if isProcessing {
                     // 处理中显示占位标题
-                    Text("正在生成标题...")
+                    Text(String.localized(.generatingTitle))
                         .font(.headline)
                         .foregroundColor(Theme.textSecondary.opacity(0.6))
                         .lineLimit(1)
@@ -144,12 +173,12 @@ struct DiaryListItemView: View {
                         .foregroundColor(entry.title == nil ? Theme.textPrimary : Theme.textSecondary)
                 } else if isProcessing {
                     // 处理中显示占位摘要
-                    Text("AI 正在为你生成日记摘要...")
+                    Text(String.localized(.generatingSummary))
                         .font(.subheadline)
                         .foregroundColor(Theme.textSecondary.opacity(0.5))
                         .lineLimit(2)
                 } else {
-                    Text("无内容")
+                    Text(String.localized(.noContent))
                         .font(.subheadline)
                         .foregroundColor(Theme.textSecondary)
                 }
@@ -200,31 +229,67 @@ struct DiaryListItemView: View {
             .allowsHitTesting(false)
     }
     
-    /// 失败状态指示器
-    private var failedIndicator: some View {
-        VStack {
-            HStack {
-                Spacer()
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.caption)
-                    .foregroundColor(.orange)
-                    .padding(8)
-            }
-            Spacer()
-        }
+    /// B-015: 失败状态遮罩（带重试按钮）
+    /// B-017: 支持多语言
+    private var failedOverlay: some View {
+        RoundedRectangle(cornerRadius: 16)
+            .fill(Color.black.opacity(0.5))
+            .overlay(
+                VStack(spacing: 8) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 12))
+                            .foregroundColor(.orange)
+                        
+                        Text(String.localized(.syncFailed))
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.white)
+                    }
+                    
+                    if let errorMessage = entry.lastErrorMessage {
+                        Text(errorMessage)
+                            .font(.system(size: 10))
+                            .foregroundColor(.white.opacity(0.7))
+                            .lineLimit(1)
+                    }
+                    
+                    // 重试按钮
+                    if onRetry != nil {
+                        Button(action: {
+                            onRetry?(entry)
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 11))
+                                Text(String.localized(.retry))
+                                    .font(.system(size: 12, weight: .medium))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 6)
+                            .background(
+                                Capsule()
+                                    .fill(Theme.accent)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            )
     }
     
     /// 处理状态文字
+    /// B-017: 支持多语言
     private var processingStateText: String {
         switch entry.processingState {
         case .processing:
-            return "处理中..."
+            return String.localized(.processing)
         case .aiGenerating:
-            return "AI 生成中..."
+            return String.localized(.aiGenerating)
         case .uploading:
-            return "上传中..."
+            return String.localized(.uploading)
         default:
-            return "处理中..."
+            return String.localized(.processing)
         }
     }
     

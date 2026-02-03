@@ -1,5 +1,5 @@
 //
-//  ParticleImageView.swift
+//  CircleImageView.swift
 //  innerBloom
 //
 //  圆形图片组件
@@ -8,7 +8,7 @@
 
 import SwiftUI
 
-struct ParticleImageView: View {
+struct CircleImageView: View {
     let image: UIImage?
     
     var body: some View {
@@ -45,7 +45,7 @@ struct ParticleImageView: View {
                         .fill(Color.white.opacity(0.05))
                         .frame(width: imageSize, height: imageSize)
                         .overlay(
-                            Text("Tap to Upload")
+                            Text(String.localized(.tapToUpload))
                                 .font(.caption)
                                 .foregroundColor(Theme.textSecondary)
                         )
@@ -60,6 +60,6 @@ struct ParticleImageView: View {
 #Preview {
     ZStack {
         Theme.background.ignoresSafeArea()
-        ParticleImageView(image: UIImage(systemName: "photo"))
+        CircleImageView(image: UIImage(systemName: "photo"))
     }
 }

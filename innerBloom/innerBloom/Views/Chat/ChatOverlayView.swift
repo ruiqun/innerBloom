@@ -4,6 +4,7 @@
 //
 //  聊天覆盖层组件 - F-004
 //  B-007: 完善聊天消息区，支持展开/收起
+//  B-017: 多语言支持
 //  Style: Cinematic, Floating Bubbles, Centered in Image
 //
 
@@ -61,9 +62,10 @@ struct ChatOverlayView: View {
     }
     
     /// Best Friend Mode: 建议话题视图
+    /// B-017: 多语言支持
     private var suggestedPromptsView: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("不知道说什么？试试这些：")
+            Text(String.localized(.notSureWhatToSay))
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(Theme.textSecondary.opacity(0.7))
                 .padding(.leading, 4)
@@ -102,9 +104,10 @@ struct ChatOverlayView: View {
     }
     
     /// 展开提示
+    /// B-017: 多语言支持
     private var expandHint: some View {
         HStack(spacing: 4) {
-            Text("还有 \(messages.count - maxVisibleMessages) 条消息")
+            Text(String.localized(.moreMessages, args: messages.count - maxVisibleMessages))
                 .font(.system(size: 11))
             Image(systemName: "chevron.up")
                 .font(.system(size: 10))

@@ -5,6 +5,7 @@
 //  输入区组件 - F-002, F-011
 //  Style: Glassmorphism-lite, Minimalist
 //  B-006: 实现语音输入功能，添加录音状态反馈和波形动画
+//  B-017: 多语言支持
 //
 
 import SwiftUI
@@ -74,7 +75,8 @@ struct InputAreaView: View {
                 .frame(width: 60, height: 24)
             
             // 实时转写文字或提示
-            Text(transcribingText.isEmpty ? "正在聆听..." : transcribingText)
+            // B-017: 多语言支持
+            Text(transcribingText.isEmpty ? String.localized(.listening) : transcribingText)
                 .font(.system(size: 14))
                 .foregroundColor(Theme.textSecondary)
                 .lineLimit(1)
@@ -112,51 +114,34 @@ struct InputAreaView: View {
             }
         }) {
             ZStack {
-                // 外圈 - 录音时有脉冲动画
+                // 外圈 - 简洁设计，无边框
                 Circle()
-                    .fill(isRecording ? Color.red.opacity(0.2) : Theme.accent.opacity(0.1))
+                    .fill(isRecording ? Color.red.opacity(0.15) : Theme.accent.opacity(0.1))
                     .frame(width: 48, height: 48)
-                    .overlay(
-                        Circle()
-                            .stroke(isRecording ? Color.red : Theme.accent, lineWidth: 1)
-                            .opacity(0.5)
-                    )
-                    .overlay(
-                        // 录音时的脉冲效果
-                        Circle()
-                            .stroke(Color.red.opacity(0.5), lineWidth: 2)
-                            .scaleEffect(isRecording ? 1.3 : 1.0)
-                            .opacity(isRecording ? 0 : 1)
-                            .animation(
-                                isRecording ?
-                                    Animation.easeOut(duration: 1.0).repeatForever(autoreverses: false) :
-                                    .default,
-                                value: isRecording
-                            )
-                    )
                 
                 // 图标
                 Image(systemName: isRecording ? "stop.fill" : "mic")
                     .font(.system(size: 20))
                     .foregroundColor(isRecording ? .red : Theme.accent)
-                    .neonGlow(color: isRecording ? .red : Theme.accent, radius: 8)
             }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(isRecording ? "停止录音" : "开始语音输入")
-        .accessibilityHint(isRecording ? "点击停止录音并识别语音" : "点击开始语音输入")
+        // B-017: 多语言无障碍支持
+        .accessibilityLabel(isRecording ? String.localized(.stopRecording) : String.localized(.startVoiceInput))
+        .accessibilityHint(isRecording ? String.localized(.tapToStopRecording) : String.localized(.tapToStartVoice))
     }
     
     // MARK: - 文字输入框
     
+    // B-017: 多语言支持
     private var textInputField: some View {
         TextField("", text: $inputText, axis: .vertical)
             .placeholder(when: inputText.isEmpty && !isRecording) {
-                Text("说说你的心情...")
+                Text(String.localized(.shareYourMood))
                     .foregroundColor(Theme.textSecondary.opacity(0.5))
             }
             .placeholder(when: inputText.isEmpty && isRecording) {
-                Text("正在聆听...")
+                Text(String.localized(.listening))
                     .foregroundColor(Color.red.opacity(0.6))
             }
             .textFieldStyle(.plain)

@@ -29,7 +29,7 @@ innerBloom/
 │   │
 │   ├── Media/                  # 媒体相关
 │   │   ├── MediaAreaView.swift # 媒体区域
-│   │   └── ParticleImageView.swift # 粒子图片视图
+│   │   └── CircleImageView.swift    # 圆形图片视图
 │   │
 │   └── Components/             # 通用组件
 │       └── ActionButtonsView.swift # 操作按钮

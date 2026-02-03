@@ -5,6 +5,8 @@
 //  主页视图 - S-001
 //  Style: Cinematic Dark Void
 //  B-003: 完善媒体选择（支持照片/视频）与草稿保存
+//  B-016: 添加设定入口
+//  B-017: 多语言支持
 //
 
 import SwiftUI
@@ -16,8 +18,11 @@ struct ContentView: View {
     // MARK: - Properties
     
     @Bindable private var viewModel = HomeViewModel.shared
+    @Bindable private var settingsManager = SettingsManager.shared
+    @Bindable private var localization = LocalizationManager.shared
     @State private var showPhotoPicker = false
     @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var showSettings = false  // B-016: 设定页面
     
     // MARK: - Body
     
@@ -52,13 +57,13 @@ struct ContentView: View {
         .onChange(of: selectedPhotoItem) { oldValue, newValue in
             handleMediaSelection(newValue)
         }
-        // 错误提示
-        .alert("提示", isPresented: $viewModel.showError) {
-            Button("确定") {
+        // B-017: 错误提示（本地化）
+        .alert(String.localized(.hint), isPresented: $viewModel.showError) {
+            Button(String.localized(.confirm)) {
                 viewModel.clearError()
             }
         } message: {
-            Text(viewModel.errorMessage ?? "发生未知错误")
+            Text(viewModel.errorMessage ?? String.localized(.unknownError))
         }
         // 完整聊天视图 (B-007)
         .sheet(isPresented: Binding(
@@ -73,7 +78,18 @@ struct ContentView: View {
         }
         // 隐藏默认 NavigationBar，使用自定义布局
         .navigationBarHidden(true)
-        .preferredColorScheme(.dark)
+        // B-016: 根据用户设定应用外观模式
+        .preferredColorScheme(settingsManager.colorScheme)
+        // B-016: 设定页面
+        .sheet(isPresented: $showSettings) {
+            SettingsView()
+        }
+        // B-016: 启动时应用外观模式
+        .onAppear {
+            settingsManager.applyAppearanceMode()
+        }
+        // B-017: 监听语言变化，刷新视图
+        .id(localization.languageChangeId)
     }
     
     // MARK: - 完整聊天视图 Sheet (B-007)
@@ -87,11 +103,11 @@ struct ContentView: View {
                     viewModel.sendMessage(text)
                 }
             )
-            .navigationTitle("对话")
+            .navigationTitle(String.localized(.conversation))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("完成") {
+                    Button(String.localized(.done)) {
                         viewModel.showFullChatView = false
                     }
                     .foregroundColor(Theme.accent)
@@ -154,22 +170,151 @@ struct ContentView: View {
     }
     
     /// 遮罩状态文字
+    /// B-017: 支持多语言
     private var overlayStatusText: String {
         // F-005: AI 生成进度优先显示
         if viewModel.isGenerating {
-            return viewModel.generationProgressText.isEmpty ? "正在生成..." : viewModel.generationProgressText
+            return viewModel.generationProgressText.isEmpty ? String.localized(.aiGenerating) : viewModel.generationProgressText
         } else if viewModel.isUploading {
-            return viewModel.uploadProgressText.isEmpty ? "正在上传..." : viewModel.uploadProgressText
+            return viewModel.uploadProgressText.isEmpty ? String.localized(.uploading) : viewModel.uploadProgressText
         } else if viewModel.isSavingMedia {
-            return "保存中..."
+            return String.localized(.saving)
         }
-        return "处理中..."
+        return String.localized(.processing)
+    }
+    
+    // MARK: - 搜索框 (B-014, F-008)
+    // B-017: 支持多语言
+    
+    private var searchBarView: some View {
+        HStack(spacing: 12) {
+            // 搜索图标
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 14))
+                .foregroundColor(Theme.textSecondary)
+            
+            // 搜索输入框
+            TextField(String.localized(.searchDiary), text: $viewModel.searchText)
+                .font(.system(size: 14))
+                .foregroundColor(Theme.textPrimary)
+                .autocorrectionDisabled()
+                .onSubmit {
+                    viewModel.performSearch()
+                }
+            
+            // 清除按钮（仅在有输入时显示）
+            if !viewModel.searchText.isEmpty {
+                Button(action: {
+                    viewModel.clearSearch()
+                }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(Theme.textSecondary)
+                }
+            }
+            
+            // 搜索按钮（仅在有输入时显示）
+            if !viewModel.searchText.isEmpty {
+                Button(action: {
+                    viewModel.performSearch()
+                }) {
+                    Text(String.localized(.search))
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(Theme.accent)
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white.opacity(0.05))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+        )
+    }
+    
+    /// 搜索结果提示 (B-014)
+    /// B-017: 支持多语言
+    private var searchResultsHeader: some View {
+        HStack {
+            Text("\(String.localized(.search))「\(viewModel.searchText)」")
+                .font(.system(size: 13))
+                .foregroundColor(Theme.textSecondary)
+            
+            if let results = viewModel.searchResults {
+                Text(String.localized(.foundDiaries, args: results.count))
+                    .font(.system(size: 13))
+                    .foregroundColor(Theme.accent)
+            }
+            
+            Spacer()
+            
+            Button(action: {
+                viewModel.clearSearch()
+            }) {
+                Text(String.localized(.clear))
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(Theme.accent)
+            }
+        }
+        .padding(.horizontal, 24)
+    }
+    
+    /// B-015: 同步失败 Banner
+    /// B-017: 支持多语言
+    private var syncFailedBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 14))
+                .foregroundColor(.orange)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(String.localized(.syncFailedCount, args: viewModel.failedEntriesCount))
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(Theme.textPrimary)
+                
+                Text(String.localized(.savedLocallyRetryLater))
+                    .font(.system(size: 11))
+                    .foregroundColor(Theme.textSecondary)
+            }
+            
+            Spacer()
+            
+            Button(action: {
+                viewModel.retryAllFailedEntries()
+            }) {
+                Text(String.localized(.retryAll))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(Theme.accent)
+                    )
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.orange.opacity(0.1))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.orange.opacity(0.3), lineWidth: 0.5)
+        )
+        .padding(.horizontal, 24)
     }
     
     // MARK: - 浏览模式 (极简列表)
     
     private var browsingModeView: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 16) {
             // 顶部 Header
             HStack {
                 Text("MEMORY")
@@ -179,15 +324,21 @@ struct ContentView: View {
                 
                 Spacer()
                 
+                // B-016: 设定按钮
                 Button(action: {
-                    // Settings
+                    showSettings = true
                 }) {
-                    Image(systemName: "slider.horizontal.3")
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 18))
                         .foregroundColor(Theme.textSecondary)
                 }
             }
             .padding(.horizontal, 24)
             .padding(.top, 16)
+            
+            // B-014: 搜索框
+            searchBarView
+                .padding(.horizontal, 24)
             
             // 标签图块 (需要调整 TagChipsView 样式以匹配)
             // 暂时复用，建议后续优化 TagChipsView 样式
@@ -195,23 +346,38 @@ struct ContentView: View {
                 tags: viewModel.availableTags,
                 selectedTag: viewModel.selectedTag,
                 onSelectTag: { tag in
+                    viewModel.clearSearch()  // 切换标签时清除搜索
                     viewModel.selectTag(tag)
                 }
             )
             .padding(.leading, 8)
             
-            // 日记列表
+            // B-014: 搜索结果提示
+            if viewModel.isShowingSearchResults {
+                searchResultsHeader
+            }
+            
+            // B-015: 同步失败 Banner
+            if viewModel.hasFailedEntries && !viewModel.isShowingSearchResults {
+                syncFailedBanner
+            }
+            
+            // 日记列表（B-013：支持下拉刷新）
+            // B-017: 支持多语言
             ScrollView {
                 DiaryListView(
-                    entries: viewModel.diaryEntries,
-                    currentTagName: viewModel.selectedTag.name,
-                    isLoading: viewModel.isLoading,
+                    entries: viewModel.displayEntries,  // B-014: 使用 displayEntries
+                    currentTagName: viewModel.isShowingSearchResults ? String.localized(.searchResult) : viewModel.selectedTag.name,
+                    isLoading: viewModel.isLoading || viewModel.isSearching,
                     onTapEntry: { entry in
                         // Detail
                         viewModel.showDiaryDetail(entry)
+                    },
+                    onRetry: { entry in  // B-015: 重试回调
+                        viewModel.retryCloudSync(for: entry.id)
                     }
                 )
-                .padding(.top, 16)
+                .padding(.top, 8)
             }
             
             Spacer()
@@ -269,18 +435,16 @@ struct ContentView: View {
                 VStack {
                     // 顶部留白
                     Spacer()
-                        .frame(height: screenHeight * 0.08)
+                        .frame(height: screenHeight * 0.12)
                     
-                    // 风格选择器
-                    StyleSelectorView(selectedStyle: $viewModel.selectedStyle)
-                        .padding(.bottom, 16)
+                    // B-016: 风格选择器移至设定页面，此处移除
                     
                     // 图片容器
                     ZStack {
                         Button(action: {
                             showPhotoPicker = true
                         }) {
-                            ParticleImageView(image: viewModel.selectedMediaImage)
+                            CircleImageView(image: viewModel.selectedMediaImage)
                         }
                         .buttonStyle(.plain)
                         
@@ -398,12 +562,13 @@ struct ContentView: View {
     }
     
     /// 处理图片选择
+    /// B-017: 支持多语言错误提示
     private func handleImageSelection(_ item: PhotosPickerItem) async {
         do {
             // 加载图片数据
             guard let data = try await item.loadTransferable(type: Data.self),
                   let image = UIImage(data: data) else {
-                await MainActor.run { showError("无法读取照片") }
+                await MainActor.run { showError(String.localized(.cannotReadPhoto)) }
                 return
             }
             
@@ -414,16 +579,17 @@ struct ContentView: View {
             print("[ContentView] Image selected successfully")
             
         } catch {
-            await MainActor.run { showError("照片读取失败：\(error.localizedDescription)") }
+            await MainActor.run { showError(String.localized(.photoReadFailed) + error.localizedDescription) }
         }
     }
     
     /// 处理视频选择
+    /// B-017: 支持多语言错误提示
     private func handleVideoSelection(_ item: PhotosPickerItem) async {
         do {
             // 加载视频数据（使用 Movie 类型）
             guard let movie = try await item.loadTransferable(type: VideoTransferable.self) else {
-                await MainActor.run { showError("无法读取影片") }
+                await MainActor.run { showError(String.localized(.cannotReadVideo)) }
                 return
             }
             
@@ -437,7 +603,7 @@ struct ContentView: View {
             try? FileManager.default.removeItem(at: movie.url)
             
             guard let thumbImage = thumbnail else {
-                await MainActor.run { showError("无法生成影片预览") }
+                await MainActor.run { showError(String.localized(.cannotGeneratePreview)) }
                 return
             }
             
@@ -448,7 +614,7 @@ struct ContentView: View {
             print("[ContentView] Video selected successfully")
             
         } catch {
-            await MainActor.run { showError("影片读取失败：\(error.localizedDescription)") }
+            await MainActor.run { showError(String.localized(.videoReadFailed) + error.localizedDescription) }
         }
     }
     

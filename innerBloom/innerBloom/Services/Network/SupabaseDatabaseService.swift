@@ -356,7 +356,7 @@ final class SupabaseDatabaseService {
         return diary.toDiaryEntry(messages: messages, tagIds: tagIds)
     }
     
-    /// 获取日记列表
+    /// 获取日记列表（B-013：支持按标签筛选，并加载每篇日记的 tagIds）
     func getDiaries(tagId: UUID? = nil, limit: Int = 50, offset: Int = 0) async throws -> [DiaryEntry] {
         print("[DatabaseService] Getting diaries, tagId: \(tagId?.uuidString ?? "all")")
         
@@ -397,7 +397,85 @@ final class SupabaseDatabaseService {
         
         let results = try decoder.decode([DiaryAPIModel].self, from: data)
         
-        return results.map { $0.toDiaryEntry() }
+        // B-013: 为每篇日记加载关联的 tagIds
+        var entries: [DiaryEntry] = []
+        for apiModel in results {
+            let tagIds = try await getTagIds(for: apiModel.id)
+            let entry = apiModel.toDiaryEntry(tagIds: tagIds)
+            entries.append(entry)
+        }
+        
+        print("[DatabaseService] Loaded \(entries.count) diaries with tags")
+        return entries
+    }
+    
+    /// 搜索日记（B-014, F-008）
+    /// - Parameters:
+    ///   - keyword: 搜索关键字
+    ///   - tagId: 可选的标签 ID，限制搜索范围
+    /// - Returns: 匹配的日记列表
+    func searchDiaries(keyword: String, tagId: UUID? = nil) async throws -> [DiaryEntry] {
+        print("[DatabaseService] Searching diaries for: \(keyword), tagId: \(tagId?.uuidString ?? "all")")
+        
+        guard config.isConfigured else {
+            throw DatabaseServiceError.notConfigured
+        }
+        
+        guard let restURL = config.restURL else {
+            throw DatabaseServiceError.invalidURL
+        }
+        
+        var components = URLComponents(url: restURL.appendingPathComponent("diaries"), resolvingAgainstBaseURL: false)!
+        
+        // 基础查询条件
+        var queryItems = [
+            URLQueryItem(name: "order", value: "created_at.desc"),
+            URLQueryItem(name: "is_saved", value: "eq.true")
+        ]
+        
+        // 如果指定了标签，先获取该标签下的日记 IDs
+        var diaryIdFilter: Set<UUID>? = nil
+        if let tagId = tagId, tagId.uuidString != "00000000-0000-0000-0000-000000000000" {
+            let diaryIds = try await getDiaryIds(for: tagId)
+            if diaryIds.isEmpty {
+                return []
+            }
+            diaryIdFilter = Set(diaryIds)
+        }
+        
+        // 使用 Supabase 的 or 查询搜索多个字段
+        // 搜索: title, diary_summary, user_input_text
+        let searchPattern = "%\(keyword)%"
+        let orCondition = "title.ilike.\(searchPattern),diary_summary.ilike.\(searchPattern),user_input_text.ilike.\(searchPattern)"
+        queryItems.append(URLQueryItem(name: "or", value: "(\(orCondition))"))
+        
+        components.queryItems = queryItems
+        
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(config.anonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        
+        let (data, _) = try await performRequest(request)
+        
+        let results = try decoder.decode([DiaryAPIModel].self, from: data)
+        
+        // 过滤标签范围（如果有指定）
+        var filteredResults = results
+        if let filter = diaryIdFilter {
+            filteredResults = results.filter { filter.contains($0.id) }
+        }
+        
+        // 为每篇日记加载关联的 tagIds
+        var entries: [DiaryEntry] = []
+        for apiModel in filteredResults {
+            let tagIds = try await getTagIds(for: apiModel.id)
+            let entry = apiModel.toDiaryEntry(tagIds: tagIds)
+            entries.append(entry)
+        }
+        
+        print("[DatabaseService] Search results: \(entries.count) diaries")
+        return entries
     }
     
     /// 删除日记

@@ -63,6 +63,52 @@ final class HomeViewModel {
     /// 是否正在加载
     var isLoading: Bool = false
     
+    // MARK: - 搜索相关 (B-014, F-008)
+    
+    /// 搜索关键字
+    var searchText: String = ""
+    
+    /// 是否正在搜索
+    var isSearching: Bool = false
+    
+    /// 搜索结果（nil 表示未搜索，空数组表示无结果）
+    var searchResults: [DiaryEntry]? = nil
+    
+    /// 显示用的日记列表（优先显示搜索结果）
+    var displayEntries: [DiaryEntry] {
+        if let results = searchResults {
+            return results
+        }
+        return diaryEntries
+    }
+    
+    /// 是否显示搜索结果
+    var isShowingSearchResults: Bool {
+        searchResults != nil
+    }
+    
+    // MARK: - 同步状态 (B-015, F-012)
+    
+    /// 获取失败条目数量
+    var failedEntriesCount: Int {
+        diaryEntries.filter { $0.processingState == .failed || $0.syncStatus == .failed }.count
+    }
+    
+    /// 是否有失败条目
+    var hasFailedEntries: Bool {
+        failedEntriesCount > 0
+    }
+    
+    /// 重试所有失败的条目
+    func retryAllFailedEntries() {
+        let failedEntries = diaryEntries.filter { $0.processingState == .failed || $0.syncStatus == .failed }
+        print("[HomeViewModel] Retrying \(failedEntries.count) failed entries")
+        
+        for entry in failedEntries {
+            retryCloudSync(for: entry.id)
+        }
+    }
+    
     // MARK: - 创建模式相关
     
     /// 当前正在创建的日记（草稿）
@@ -183,7 +229,7 @@ final class HomeViewModel {
         }
     }
     
-    /// 从云端加载标签
+    /// 从云端加载标签（B-013：确保「全部」标签始终首位）
     @MainActor
     private func loadTagsFromCloud() async {
         guard networkMonitor.isConnected else {
@@ -193,16 +239,33 @@ final class HomeViewModel {
         
         do {
             let cloudTags = try await databaseService.getTags()
-            if !cloudTags.isEmpty {
-                availableTags = cloudTags
-                // 确保选中的标签仍然有效
-                if !availableTags.contains(where: { $0.id == selectedTag.id }) {
-                    selectedTag = availableTags.first ?? Tag.all
-                }
-                print("[HomeViewModel] Tags loaded from cloud: \(cloudTags.count)")
+            
+            // B-013: 合并标签列表，确保「全部」始终在首位
+            var mergedTags: [Tag] = []
+            
+            // 1. 添加本地「全部」标签（固定 ID）
+            mergedTags.append(Tag.all)
+            
+            // 2. 添加云端标签（排除重复的「全部」标签）
+            let allTagId = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
+            let otherTags = cloudTags.filter { $0.id != allTagId }
+            
+            // 3. 按 sortOrder 排序后追加
+            let sortedTags = otherTags.sorted { $0.sortOrder < $1.sortOrder }
+            mergedTags.append(contentsOf: sortedTags)
+            
+            availableTags = mergedTags
+            
+            // 确保选中的标签仍然有效
+            if !availableTags.contains(where: { $0.id == selectedTag.id }) {
+                selectedTag = Tag.all
             }
+            
+            print("[HomeViewModel] Tags loaded from cloud: \(mergedTags.count) (including 全部)")
+            
         } catch {
             print("[HomeViewModel] Failed to load tags from cloud: \(error)")
+            // 保持使用本地「全部」标签
         }
     }
     
@@ -279,6 +342,98 @@ final class HomeViewModel {
         Task {
             await loadDiariesFromCloud()
         }
+    }
+    
+    /// 刷新当前列表（B-013：支持下拉刷新的 async 版本）
+    @MainActor
+    func refreshCurrentList() async {
+        print("[HomeViewModel] Refreshing list for tag: \(selectedTag.name)")
+        isLoading = true
+        
+        // 清除搜索状态
+        clearSearch()
+        
+        // 同时刷新标签和日记列表
+        await loadTagsFromCloud()
+        await loadDiariesFromCloud()
+    }
+    
+    // MARK: - 搜索操作 (B-014, F-008)
+    
+    /// 执行搜索
+    func performSearch() {
+        let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        guard !keyword.isEmpty else {
+            clearSearch()
+            return
+        }
+        
+        print("[HomeViewModel] Searching for: \(keyword)")
+        isSearching = true
+        
+        Task {
+            await searchDiaries(keyword: keyword)
+        }
+    }
+    
+    /// 清除搜索
+    func clearSearch() {
+        searchText = ""
+        searchResults = nil
+        isSearching = false
+        print("[HomeViewModel] Search cleared")
+    }
+    
+    /// 从云端搜索日记
+    @MainActor
+    private func searchDiaries(keyword: String) async {
+        defer { isSearching = false }
+        
+        guard networkMonitor.isConnected else {
+            print("[HomeViewModel] Offline, cannot search")
+            // 离线时从本地列表搜索
+            searchResults = diaryEntries.filter { entry in
+                matchesKeyword(entry: entry, keyword: keyword)
+            }
+            return
+        }
+        
+        do {
+            // 根据当前选中的标签决定搜索范围
+            let tagId = selectedTag.id.uuidString == "00000000-0000-0000-0000-000000000000" ? nil : selectedTag.id
+            let results = try await databaseService.searchDiaries(keyword: keyword, tagId: tagId)
+            searchResults = results
+            print("[HomeViewModel] Search results: \(results.count)")
+        } catch {
+            print("[HomeViewModel] Search failed: \(error)")
+            // 搜索失败时从本地列表搜索
+            searchResults = diaryEntries.filter { entry in
+                matchesKeyword(entry: entry, keyword: keyword)
+            }
+        }
+    }
+    
+    /// 本地匹配关键字
+    private func matchesKeyword(entry: DiaryEntry, keyword: String) -> Bool {
+        let lowercasedKeyword = keyword.lowercased()
+        
+        // 搜索标题
+        if let title = entry.title?.lowercased(), title.contains(lowercasedKeyword) {
+            return true
+        }
+        
+        // 搜索总结
+        if let summary = entry.diarySummary?.lowercased(), summary.contains(lowercasedKeyword) {
+            return true
+        }
+        
+        // 搜索用户输入
+        if let input = entry.userInputText?.lowercased(), input.contains(lowercasedKeyword) {
+            return true
+        }
+        
+        return false
     }
     
     /// 从云端加载日记

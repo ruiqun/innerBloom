@@ -3,6 +3,7 @@
 //  innerBloom
 //
 //  操作按钮组件 - F-005
+//  B-017: 多语言支持
 //  Style: Cinematic, Emerald Accent
 //
 
@@ -34,6 +35,7 @@ struct ActionButtonsView: View {
             Spacer()
             
             // Save Memory 按钮 (强调色胶囊按钮)
+            // B-017: 多语言支持
             Button(action: onSaveMemory) {
                 HStack(spacing: 8) {
                     if isSaving {
@@ -43,7 +45,7 @@ struct ActionButtonsView: View {
                     } else {
                         Image(systemName: "heart.fill")
                             .font(.system(size: 14, weight: .medium))
-                        Text("Save Memory")
+                        Text(String.localized(.saveMemory))
                             .font(.system(size: 14, weight: .semibold))
                     }
                 }

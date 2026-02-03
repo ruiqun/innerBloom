@@ -4,6 +4,7 @@
 //
 //  完整聊天视图组件 - F-004, D-003
 //  B-007: 加入聊天消息区（先假资料）
+//  B-017: 多语言支持
 //  Style: Cinematic Dark, Floating Bubbles
 //
 
@@ -87,10 +88,11 @@ struct ChatView: View {
     }
     
     // MARK: - 快速输入区
+    // B-017: 支持多语言
     
     private var quickInputArea: some View {
         HStack(spacing: 12) {
-            TextField("回复...", text: $inputText, prompt: Text("回复...").foregroundColor(Theme.textSecondary.opacity(0.5)), axis: .vertical)
+            TextField(String.localized(.reply), text: $inputText, prompt: Text(String.localized(.reply)).foregroundColor(Theme.textSecondary.opacity(0.5)), axis: .vertical)
                 .textFieldStyle(.plain)
                 .foregroundColor(Theme.textPrimary)
                 .lineLimit(1...3)

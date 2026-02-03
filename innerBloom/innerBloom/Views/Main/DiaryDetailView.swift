@@ -4,6 +4,7 @@
 //
 //  日记详情页 - S-002 (B-012)
 //  显示：媒体 + 日记总结 + 标签 + 聊天记录
+//  B-017: 多语言支持
 //  Style: Cinematic Dark
 //
 
@@ -48,10 +49,11 @@ struct DiaryDetailView: View {
                         }
                         
                         // 标签列表
+                        // B-017: 支持多语言
                         if !entry.tagIds.isEmpty {
                             // 提示用户标签来源 (如果是 Mock 或特定格式)
                             if entry.tagIds.contains(where: { findTag(byId: $0)?.name.contains("年") ?? false }) {
-                                Text("AI 生成的标签")
+                                Text(String.localized(.aiGeneratedTags))
                                     .font(.caption2)
                                     .foregroundColor(Theme.textSecondary.opacity(0.5))
                                     .padding(.bottom, -8)
@@ -96,7 +98,7 @@ struct DiaryDetailView: View {
         ZStack(alignment: .bottom) {
             // 媒体内容
             Group {
-                if entry.mediaType == .video, let localPath = entry.localMediaPath {
+                if entry.mediaType == .video, entry.localMediaPath != nil {
                     // 视频播放器
                     VideoPlayer(player: player)
                         .overlay(
@@ -157,9 +159,10 @@ struct DiaryDetailView: View {
             Spacer()
             
             // 更多操作菜单
+            // B-017: 支持多语言
             Menu {
                 Button(role: .destructive, action: { onDelete?() }) {
-                    Label("删除日记", systemImage: "trash")
+                    Label(String.localized(.deleteDiary), systemImage: "trash")
                 }
             } label: {
                 Image(systemName: "ellipsis")
@@ -197,9 +200,10 @@ struct DiaryDetailView: View {
     }
     
     /// 日记总结
+    /// B-017: 支持多语言
     private var summaryView: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(entry.displaySummary ?? "暂无内容")
+            Text(entry.displaySummary ?? String.localized(.noContent))
                 .font(.system(size: 17, weight: .regular))
                 .lineSpacing(6)
                 .foregroundColor(Theme.textPrimary)
@@ -213,7 +217,7 @@ struct DiaryDetailView: View {
                         .foregroundColor(Theme.textSecondary)
                         .padding(.top, 8)
                 } label: {
-                    Text("AI 眼中的画面")
+                    Text(String.localized(.aiViewOfImage))
                         .font(.caption)
                         .foregroundColor(Theme.accent)
                 }
@@ -228,15 +232,16 @@ struct DiaryDetailView: View {
     }
     
     /// 聊天记录预览
+    /// B-017: 支持多语言
     private var chatHistoryPreview: some View {
         Button(action: { showFullChat = true }) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("回顾对话")
+                    Text(String.localized(.reviewConversation))
                         .font(.headline)
                         .foregroundColor(Theme.textPrimary)
                     
-                    Text("\(entry.messages.count) 条对话记录")
+                    Text(String.localized(.conversationRecords, args: entry.messages.count))
                         .font(.caption)
                         .foregroundColor(Theme.textSecondary)
                 }
@@ -254,6 +259,7 @@ struct DiaryDetailView: View {
     }
     
     /// 聊天记录 Sheet
+    /// B-017: 支持多语言
     private var chatHistorySheet: some View {
         NavigationStack {
             ChatView(
@@ -262,11 +268,11 @@ struct DiaryDetailView: View {
                 readOnly: true,
                 onSendMessage: { _ in }
             )
-            .navigationTitle("对话回顾")
+            .navigationTitle(String.localized(.reviewConversation))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("关闭") { showFullChat = false }
+                    Button(String.localized(.close)) { showFullChat = false }
                         .foregroundColor(Theme.accent)
                 }
             }
