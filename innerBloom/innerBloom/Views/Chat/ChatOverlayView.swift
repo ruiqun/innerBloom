@@ -97,9 +97,12 @@ struct ChatOverlayView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 8)
         .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.black.opacity(0.3))
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+            ZStack {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(.ultraThinMaterial)
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.black.opacity(0.2))
+            }
         )
     }
     
@@ -137,15 +140,18 @@ struct ChatBubble: View {
                 .padding(.horizontal, isCompact ? 14 : 16)
                 .padding(.vertical, isCompact ? 10 : 12)
                 .background(
-                    RoundedRectangle(cornerRadius: isCompact ? 16 : 20)
-                        .fill(bubbleBackground(for: message.sender))
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: isCompact ? 16 : 20))
+                    ZStack {
+                        RoundedRectangle(cornerRadius: isCompact ? 16 : 20)
+                            .fill(.ultraThinMaterial)
+                        RoundedRectangle(cornerRadius: isCompact ? 16 : 20)
+                            .fill(bubbleTint(for: message.sender))
+                    }
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: isCompact ? 16 : 20)
                         .stroke(bubbleBorder(for: message.sender), lineWidth: 0.5)
                 )
-                .shadow(color: Color.black.opacity(0.3), radius: isCompact ? 4 : 6, x: 0, y: 2)
+                .shadow(color: Color.black.opacity(0.2), radius: isCompact ? 4 : 6, x: 0, y: 2)
             
             if message.sender == .ai {
                 Spacer(minLength: isCompact ? 20 : 40)
@@ -153,12 +159,13 @@ struct ChatBubble: View {
         }
     }
     
-    private func bubbleBackground(for sender: ChatSender) -> Color {
+    /// 半透明 tint，叠加在 material 上，保留背景图片可见性
+    private func bubbleTint(for sender: ChatSender) -> Color {
         switch sender {
         case .user:
-            return Theme.accent.opacity(0.4)
+            return Theme.accent.opacity(0.18)
         case .ai:
-            return Theme.aiBubbleBackground.opacity(0.9)
+            return Color.black.opacity(0.25)
         }
     }
     
@@ -192,15 +199,18 @@ struct CompactTypingIndicator: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
             .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Theme.aiBubbleBackground.opacity(0.9))
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+                ZStack {
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(.ultraThinMaterial)
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(Color.black.opacity(0.25))
+                }
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 16)
-                    .stroke(Color.white.opacity(0.3), lineWidth: 0.5)
+                    .stroke(Color.white.opacity(0.25), lineWidth: 0.5)
             )
-            .shadow(color: Color.black.opacity(0.3), radius: 4, x: 0, y: 2)
+            .shadow(color: Color.black.opacity(0.2), radius: 4, x: 0, y: 2)
             
             Spacer()
         }

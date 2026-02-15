@@ -152,30 +152,17 @@ struct DiaryListItemView: View {
                     .font(.caption)
                     .foregroundColor(Theme.textSecondary)
                 
-                // B-017: 支持多语言
-                if let title = entry.title {
-                    Text(title)
-                        .font(.headline)
-                        .foregroundColor(Theme.textPrimary)
-                        .lineLimit(1)
-                } else if isProcessing {
-                    // 处理中显示占位标题
-                    Text(String.localized(.generatingTitle))
-                        .font(.headline)
-                        .foregroundColor(Theme.textSecondary.opacity(0.6))
-                        .lineLimit(1)
-                }
-                
+                // 日记总结（不显示标题）
                 if let summary = entry.displaySummary {
                     Text(summary)
-                        .font(.subheadline)
+                        .font(.headline)
                         .lineLimit(2)
-                        .foregroundColor(entry.title == nil ? Theme.textPrimary : Theme.textSecondary)
+                        .foregroundColor(Theme.textPrimary)
                 } else if isProcessing {
-                    // 处理中显示占位摘要
+                    // 处理中显示占位
                     Text(String.localized(.generatingSummary))
-                        .font(.subheadline)
-                        .foregroundColor(Theme.textSecondary.opacity(0.5))
+                        .font(.headline)
+                        .foregroundColor(Theme.textSecondary.opacity(0.6))
                         .lineLimit(2)
                 } else {
                     Text(String.localized(.noContent))

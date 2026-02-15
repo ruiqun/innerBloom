@@ -47,14 +47,9 @@ const SYSTEM_PROMPTS = {
   summary: `你是一个日记总结助手。请根据用户与 AI 的对话内容，生成一篇使用者口吻的日记。
 
 ## 绝对禁止（违反将被视为失败）
-- ❌ 标题中不能有任何日期（如"2023年10月某日"、"某月某日"、"今天"等）
 - ❌ 内容中不能编造具体日期、时间、年份
 - ❌ 不能使用"某年某月"、"某日"这类模糊日期表述
 - ❌ 不能添加对话中完全没有提到的事实
-
-## 标题规则
-- 标题必须是内容主题的概括（如："窗边的午后"、"一张照片的回忆"、"工作的疲惫"）
-- 标题 5-10 个字，不能有日期、数字年份
 
 ## 内容规则
 1. 用第一人称「我」来写
@@ -65,7 +60,7 @@ const SYSTEM_PROMPTS = {
 6. 没有的信息就不提，不要编造
 
 ## 输出格式
-返回 JSON：{"summary": "日记内容", "title": "日记标题"}`,
+返回 JSON：{"summary": "日记内容"}`,
 
   tags: `你是一个标签生成助手。请根据对话内容生成**最多3个**标签。
 
@@ -351,16 +346,15 @@ async function handleSummary(body: any) {
 
   const response = await callOpenAI(openaiMessages, OPENAI_MODEL, 500)
   
-  // 尝试解析 JSON
+  // 尝试解析 JSON（不返回 title）
   try {
     const result = JSON.parse(response)
     return {
-      summary: result.summary,
-      title: result.title
+      summary: result.summary || response,
+      title: null
     }
   } catch {
-    // 降级处理
-    return { summary: response, title: '无题' }
+    return { summary: response, title: null }
   }
 }
 

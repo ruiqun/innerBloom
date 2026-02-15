@@ -39,15 +39,6 @@ struct DiaryDetailView: View {
                         // 日期与时间
                         dateHeaderView
                         
-                        // 标题 (如果有)
-                        if let title = entry.title {
-                            Text(title)
-                                .font(.title2)
-                                .fontWeight(.bold)
-                                .foregroundColor(Theme.textPrimary)
-                                .padding(.bottom, 4)
-                        }
-                        
                         // 标签列表
                         // B-017: 支持多语言
                         if !entry.tagIds.isEmpty {

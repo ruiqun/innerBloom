@@ -573,7 +573,7 @@ final class AIService: AIServiceProtocol {
         guard networkMonitor.isConnected else {
             print("[AIService] No network, using mock summary")
             let mock = mockGenerateSummary(messages: messages, analysisContext: analysisContext)
-            return (summary: mock, title: "日记 \(Date().formatted(date: .numeric, time: .omitted))")
+            return (summary: mock, title: "")
         }
         
         // 2. 根据当前模式选择实现
@@ -583,7 +583,7 @@ final class AIService: AIServiceProtocol {
         case .mock:
             print("[AIService] Using mock summary")
             let mock = mockGenerateSummary(messages: messages, analysisContext: analysisContext)
-            return (summary: mock, title: "日记 \(Date().formatted(date: .numeric, time: .omitted))")
+            return (summary: mock, title: "")
         case .backend:
             break // 继续使用后端
         }
@@ -592,7 +592,7 @@ final class AIService: AIServiceProtocol {
         guard endpoint.isConfigured else {
             print("[AIService] Endpoint not configured, falling back to mock")
             let mock = mockGenerateSummary(messages: messages, analysisContext: analysisContext)
-            return (summary: mock, title: "日记 \(Date().formatted(date: .numeric, time: .omitted))")
+            return (summary: mock, title: "")
         }
         
         // 4. 构建请求（适配 Supabase Edge Function）
@@ -647,7 +647,7 @@ final class AIService: AIServiceProtocol {
             let summaryResponse = try JSONDecoder().decode(EdgeFunctionSummaryResponse.self, from: data)
             
             print("[AIService] Summary generated: \(summaryResponse.summary.prefix(50))...")
-            return (summary: summaryResponse.summary, title: summaryResponse.title ?? "无题")
+            return (summary: summaryResponse.summary, title: "")
             
         } catch let error as AIServiceError {
             throw error
@@ -787,14 +787,9 @@ final class AIService: AIServiceProtocol {
         \(userLanguage.aiLanguageInstruction)
         
         ## 绝对禁止（违反将被视为失败）
-        - ❌ 标题中不能有任何日期（如"2023年10月某日"、"某月某日"、"今天"等）
         - ❌ 内容中不能编造具体日期、时间、年份
         - ❌ 不能使用"某年某月"、"某日"这类模糊日期表述
         - ❌ 不能添加对话中完全没有提到的事实
-        
-        ## 标题规则
-        - 标题必须是内容主题的概括（如："窗边的午后"、"一张照片的回忆"、"工作的疲惫"）
-        - 标题 5-10 个字，不能有日期、数字年份
         
         ## 内容规则
         1. 用第一人称「我」来写
@@ -805,7 +800,7 @@ final class AIService: AIServiceProtocol {
         6. 没有的信息就不提，不要编造
         
         ## 输出格式
-        返回 JSON：{"summary": "日记内容", "title": "日记标题"}
+        返回 JSON：{"summary": "日记内容"}
         """
         
         // B-016: 使用用户设定的 AI 口吻风格
@@ -836,7 +831,7 @@ final class AIService: AIServiceProtocol {
             userPrompt += "\n"
         }
         
-        userPrompt += "请根据以上内容，生成一篇使用者口吻的日记和标题。"
+        userPrompt += "请根据以上内容，生成一篇使用者口吻的日记。"
         
         do {
             let openaiMessages = [
@@ -846,19 +841,17 @@ final class AIService: AIServiceProtocol {
             
             let response = try await openAIService.chat(messages: openaiMessages)
             
-            // 尝试解析 JSON
+            // 尝试解析 JSON（不解析 title）
             struct SummaryResponse: Codable {
                 let summary: String
-                let title: String
             }
             
             if let jsonData = response.data(using: .utf8),
                let result = try? JSONDecoder().decode(SummaryResponse.self, from: jsonData) {
-                return (summary: result.summary, title: result.title)
+                return (summary: result.summary, title: "")
             }
             
-            // 降级处理
-            return (summary: response, title: "日记 \(Date().formatted(date: .numeric, time: .omitted))")
+            return (summary: response, title: "")
             
         } catch let error as OpenAIServiceError {
             throw AIServiceError.serverError(statusCode: -1, message: error.localizedDescription)

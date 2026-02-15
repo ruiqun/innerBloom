@@ -745,7 +745,7 @@ final class HomeViewModel {
         if !messages.isEmpty {
             await updateEntryInListAsync(draftId) { $0.markAIGenerating() }
             
-            // 生成标题 + 总结
+            // 生成总结（不生成标题）
             do {
                 let result = try await aiService.generateSummary(
                     messages: messages,
@@ -754,10 +754,10 @@ final class HomeViewModel {
                     environmentContext: environment
                 )
                 draft.diarySummary = result.summary
-                draft.title = result.title
+                draft.title = nil  // 不生成/显示标题
                 draft.style = style.rawValue
                 draft.isSummarized = true
-                print("[HomeViewModel] ✅ Summary generated: \(result.title)")
+                print("[HomeViewModel] ✅ Summary generated")
             } catch {
                 print("[HomeViewModel] ⚠️ Summary generation failed: \(error)")
                 // 继续流程，不阻断
@@ -784,10 +784,9 @@ final class HomeViewModel {
                 try? draftManager.saveDraft(draft)
             }
             
-            // 更新 UI 列表中的条目（自动刷新标题/总结/标签）
+            // 更新 UI 列表中的条目（自动刷新总结/标签）
             let updatedDraft = draft
             await updateEntryInListAsync(draftId) { entry in
-                entry.title = updatedDraft.title
                 entry.diarySummary = updatedDraft.diarySummary
                 entry.tagIds = updatedDraft.tagIds
                 entry.isSummarized = updatedDraft.isSummarized
