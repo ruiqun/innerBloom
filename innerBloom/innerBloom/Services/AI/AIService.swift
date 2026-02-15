@@ -363,12 +363,16 @@ final class AIService: AIServiceProtocol {
             let image_base64: String
             let media_type: String
             let user_context: String?
+            let language: String?
         }
+        
+        let userLanguage = SettingsManager.shared.appLanguage.rawValue
         
         let analyzeRequest = AnalyzeRequest(
             image_base64: base64Image,
             media_type: mediaType.rawValue,
-            user_context: userContext
+            user_context: userContext,
+            language: userLanguage
         )
         
         request.httpBody = try JSONEncoder().encode(analyzeRequest)
@@ -457,22 +461,27 @@ final class AIService: AIServiceProtocol {
         }
         
         // 4. 构建请求（适配 Supabase Edge Function）
+        // B-017: 传递语言设定，后端据此注入语言指令
         struct EdgeFunctionChatRequest: Codable {
             let messages: [[String: String]]
             let analysis_context: AIAnalysisContextDTO?
             let environment_context: EnvironmentContextDTO?
             let style: String?
+            let language: String?
         }
         
         let chatMessages = messages.map { msg -> [String: String] in
             ["role": msg.sender == .user ? "user" : "assistant", "content": msg.content]
         }
         
+        let userLanguage = SettingsManager.shared.appLanguage.rawValue
+        
         let edgeRequest = EdgeFunctionChatRequest(
             messages: chatMessages,
             analysis_context: analysisContext.map { AIAnalysisContextDTO(from: $0) },
             environment_context: environmentContext.map { EnvironmentContextDTO(from: $0) },
-            style: style?.rawValue
+            style: style?.rawValue,
+            language: userLanguage
         )
         
         // 5. 发送请求
@@ -760,9 +769,11 @@ final class AIService: AIServiceProtocol {
     ) async throws -> (summary: String, title: String) {
         // B-016: 从 SettingsManager 获取用户偏好的 AI 风格
         let userToneStyle = SettingsManager.shared.aiToneStyle
+        let userLanguage = SettingsManager.shared.appLanguage
         
         print("[AIService] 📝 Generating summary with OpenAI")
         print("[AIService] 🎨 User tone style: \(userToneStyle.displayName)")
+        print("[AIService] 🌐 User language: \(userLanguage.displayName)")
         
         // 构建对话内容
         let conversationText = messages
@@ -772,6 +783,8 @@ final class AIService: AIServiceProtocol {
         // 系统提示
         var systemPrompt = """
         你是一个日记总结助手。请根据用户与 AI 的对话内容，生成一篇使用者口吻的日记。
+        
+        \(userLanguage.aiLanguageInstruction)
         
         ## 绝对禁止（违反将被视为失败）
         - ❌ 标题中不能有任何日期（如"2023年10月某日"、"某月某日"、"今天"等）
@@ -862,13 +875,17 @@ final class AIService: AIServiceProtocol {
     ) async throws -> [String] {
         // B-016: 从 SettingsManager 获取用户偏好的 AI 风格
         let userToneStyle = SettingsManager.shared.aiToneStyle
+        let userLanguage = SettingsManager.shared.appLanguage
         
         print("[AIService] 🏷️ Generating tags with OpenAI, existing: \(existingTags.count)")
         print("[AIService] 🎨 User tone style: \(userToneStyle.displayName)")
+        print("[AIService] 🌐 User language: \(userLanguage.displayName)")
         
         // 系统提示
         var systemPrompt = """
         你是一个标签生成助手。请根据对话内容生成**最多3个**标签。
+        
+        \(userLanguage.aiLanguageInstruction)
         
         要求：
         1. 返回 JSON 数组格式：["标签1", "标签2", "标签3"]
@@ -1055,7 +1072,10 @@ final class AIService: AIServiceProtocol {
         mediaType: MediaType,
         userContext: String?
     ) async throws -> AIAnalysisResult {
+        let userLanguage = SettingsManager.shared.appLanguage
+        
         print("[AIService] Analyzing media with OpenAI Vision")
+        print("[AIService] 🌐 User language: \(userLanguage.displayName)")
         
         guard let image = UIImage(data: imageData) else {
             throw AIServiceError.uploadFailed(NSError(domain: "AIService", code: -1, userInfo: [NSLocalizedDescriptionKey: "无法解析图片数据"]))
@@ -1065,6 +1085,8 @@ final class AIService: AIServiceProtocol {
         let systemPrompt = """
         你是一个专业的图片分析助手，负责分析用户上传的照片或视频截图。
         请用温暖、富有同理心的语气进行分析。
+        
+        \(userLanguage.aiLanguageInstruction)
         
         请分析图片并返回以下信息：
         1. 描述你看到的内容（2-3句话）
@@ -1132,14 +1154,19 @@ final class AIService: AIServiceProtocol {
     ) async throws -> String {
         // B-016: 从 SettingsManager 获取用户偏好的 AI 风格
         let userToneStyle = SettingsManager.shared.aiToneStyle
+        let userLanguage = SettingsManager.shared.appLanguage
         let effectiveStyle = style ?? DiaryStyle(from: userToneStyle)
         
         print("[AIService] 🎨 Chatting with OpenAI (Best Friend Mode)")
         print("[AIService] 🎨 User tone style: \(userToneStyle.displayName)")
         print("[AIService] 🎨 Effective diary style: \(effectiveStyle.displayName)")
+        print("[AIService] 🌐 User language: \(userLanguage.displayName)")
+        
+        // B-017: 语言规则放在最前面（最高优先级）
+        var systemPrompt = "\(userLanguage.aiLanguageInstruction)\n\n"
         
         // 构建"最懂你的好朋友"系统提示
-        var systemPrompt = buildBestFriendPrompt(
+        systemPrompt += buildBestFriendPrompt(
             hasMediaAnalysis: analysisContext != nil,
             hasEnvironment: environmentContext?.hasValidInfo == true
         )
@@ -1260,7 +1287,7 @@ final class AIService: AIServiceProtocol {
         - **再次强调**：一次回复只能有一个问号，放在最后。不要用“...呢？比如...？”这种连续提问句式。
         
         ## 回复风格
-        - 语言：跟随用户（繁体/简体中文）
+        - 语言：严格遵守上方的「语言规则」，不得违反
         - 长度：3-6句话，温柔自然，不啰嗦
         - 不要每次都以问句结尾，可以分享感想后自然结束，或用轻松的邀请语
         

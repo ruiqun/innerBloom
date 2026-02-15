@@ -205,15 +205,15 @@ enum TimePeriod: String, Codable {
         }
     }
     
-    /// 时段对应的问候语
+    /// 时段对应的问候语（B-017: 跟随语言设定）
     var greeting: String {
         switch self {
-        case .earlyMorning: return "夜深了，还没休息吗？"
-        case .morning:      return "早安！新的一天开始了"
-        case .noon:         return "午安！吃过午饭了吗？"
-        case .afternoon:    return "下午好！"
-        case .evening:      return "傍晚好！"
-        case .night:        return "晚上好！"
+        case .earlyMorning: return String.localized(.greetingEarlyMorning)
+        case .morning:      return String.localized(.greetingMorning)
+        case .noon:         return String.localized(.greetingNoon)
+        case .afternoon:    return String.localized(.greetingAfternoon)
+        case .evening:      return String.localized(.greetingEvening)
+        case .night:        return String.localized(.greetingNight)
         }
     }
 }

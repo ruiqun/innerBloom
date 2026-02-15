@@ -1503,7 +1503,7 @@ final class HomeViewModel {
         isLoadingEnvironment = false
     }
     
-    /// 发送即时欢迎消息（< 0.5s 响应）(B-010 优化)
+    /// 发送即时欢迎消息（< 0.5s 响应）(B-010 优化, B-017: 多语言)
     private func sendInstantWelcomeMessage(for mediaType: MediaType) {
         isAITyping = false
         
@@ -1511,13 +1511,13 @@ final class HomeViewModel {
         let timeContext = environmentService.getTimeContext()
         let greeting = timeContext.timeInfo.period.greeting
         
-        // 根据媒体类型 + 时间生成欢迎消息
+        // B-017: 根据媒体类型 + 时间生成本地化欢迎消息
         let content: String
         switch mediaType {
         case .photo:
-            content = "\(greeting)这张照片看起来很有故事！想聊聊是在什么情况下拍的吗？"
+            content = String.localized(.welcomePhotoInstant, args: greeting)
         case .video:
-            content = "\(greeting)这段视频记录了什么特别的时刻呢？我很想听你分享～"
+            content = String.localized(.welcomeVideoInstant, args: greeting)
         }
         
         let welcomeMsg = ChatMessage(sender: .ai, content: content)
@@ -1643,44 +1643,39 @@ final class HomeViewModel {
         print("[HomeViewModel] AI analysis-based welcome message sent")
     }
     
-    /// 根据分析结果生成开场白 (B-008)
+    /// 根据分析结果生成开场白 (B-008, B-017: 多语言)
     private func generateOpenerFromAnalysis(_ analysis: AIAnalysisResult, mediaType: MediaType) -> String {
         // 根据检测到的情绪调整语气
         if let mood = analysis.mood {
             switch mood.lowercased() {
             case "joyful", "happy", "excited":
-                return "感受到这张\(mediaType == .photo ? "照片" : "影片")里的快乐氛围了！能跟我分享一下吗？"
+                return String.localized(mediaType == .photo ? .openerJoyfulPhoto : .openerJoyfulVideo)
             case "peaceful", "calm", "serene":
-                return "这\(mediaType == .photo ? "张照片" : "段影片")给人很宁静的感觉，是什么让你想记录这个时刻？"
+                return String.localized(mediaType == .photo ? .openerPeacefulPhoto : .openerPeacefulVideo)
             case "nostalgic", "melancholy":
-                return "这\(mediaType == .photo ? "张照片" : "段影片")似乎有很多故事，愿意跟我聊聊吗？"
+                return String.localized(mediaType == .photo ? .openerNostalgicPhoto : .openerNostalgicVideo)
             case "adventurous", "exciting":
-                return "看起来是一次很棒的经历！能跟我说说发生了什么吗？"
+                return String.localized(.openerAdventurous)
             default:
                 break
             }
         }
         
-        // 根据场景标签生成
+        // 根据场景标签生成（支持中英文标签匹配）
         if let tags = analysis.sceneTags, !tags.isEmpty {
-            if tags.contains(where: { $0.contains("旅行") || $0.contains("风景") }) {
-                return "这是旅途中的风景吗？看起来很美，能说说这趟旅程吗？"
+            if tags.contains(where: { $0.contains("旅行") || $0.contains("风景") || $0.lowercased().contains("travel") || $0.lowercased().contains("scenery") }) {
+                return String.localized(.openerTagTravel)
             }
-            if tags.contains(where: { $0.contains("朋友") || $0.contains("聚会") }) {
-                return "和朋友在一起的时光总是特别的，这是什么场合呢？"
+            if tags.contains(where: { $0.contains("朋友") || $0.contains("聚会") || $0.lowercased().contains("friend") || $0.lowercased().contains("party") }) {
+                return String.localized(.openerTagFriends)
             }
-            if tags.contains(where: { $0.contains("美食") }) {
-                return "看起来很好吃的样子！这是在哪里享用的？"
+            if tags.contains(where: { $0.contains("美食") || $0.lowercased().contains("food") || $0.lowercased().contains("delicious") }) {
+                return String.localized(.openerTagFood)
             }
         }
         
         // 默认开场白
-        switch mediaType {
-        case .photo:
-            return "这张照片拍得很有感觉，能跟我说说背后的故事吗？"
-        case .video:
-            return "这段影片记录了什么特别的时刻呢？我很想听你分享。"
-        }
+        return String.localized(mediaType == .photo ? .openerDefaultPhoto : .openerDefaultVideo)
     }
     
     /// 发送默认欢迎消息（当 AI 分析失败或不可用时）(B-008)

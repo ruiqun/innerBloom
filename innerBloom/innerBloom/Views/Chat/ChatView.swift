@@ -288,14 +288,14 @@ extension ChatMessage {
         )
     ]
     
-    /// AI 欢迎语
+    /// AI 欢迎语（B-017: 跟随语言设定）
     static func welcomeMessage(for mediaType: MediaType) -> ChatMessage {
         let content: String
         switch mediaType {
         case .photo:
-            content = "这张照片看起来很有故事，能跟我说说吗？"
+            content = String.localized(.welcomePhotoDefault)
         case .video:
-            content = "这段影片记录了什么特别的时刻呢？"
+            content = String.localized(.welcomeVideoDefault)
         }
         return ChatMessage(sender: .ai, content: content)
     }

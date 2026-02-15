@@ -187,6 +187,32 @@ enum L10nKey: String, CaseIterable {
     case toneEmpathetic = "tone_empathetic"
     case toneEmpatheticDesc = "tone_empathetic_desc"
     
+    // MARK: - 问候语 & 欢迎语 (B-017)
+    case greetingEarlyMorning = "greeting_early_morning"
+    case greetingMorning = "greeting_morning"
+    case greetingNoon = "greeting_noon"
+    case greetingAfternoon = "greeting_afternoon"
+    case greetingEvening = "greeting_evening"
+    case greetingNight = "greeting_night"
+    
+    case welcomePhotoInstant = "welcome_photo_instant"
+    case welcomeVideoInstant = "welcome_video_instant"
+    case welcomePhotoDefault = "welcome_photo_default"
+    case welcomeVideoDefault = "welcome_video_default"
+    
+    case openerJoyfulPhoto = "opener_joyful_photo"
+    case openerJoyfulVideo = "opener_joyful_video"
+    case openerPeacefulPhoto = "opener_peaceful_photo"
+    case openerPeacefulVideo = "opener_peaceful_video"
+    case openerNostalgicPhoto = "opener_nostalgic_photo"
+    case openerNostalgicVideo = "opener_nostalgic_video"
+    case openerAdventurous = "opener_adventurous"
+    case openerTagTravel = "opener_tag_travel"
+    case openerTagFriends = "opener_tag_friends"
+    case openerTagFood = "opener_tag_food"
+    case openerDefaultPhoto = "opener_default_photo"
+    case openerDefaultVideo = "opener_default_video"
+    
     // MARK: - 隐私政策
     case privacyPolicyTitle = "privacy_policy_title"
     case dataCollection = "data_collection"
@@ -233,7 +259,7 @@ enum L10nKey: String, CaseIterable {
         case .unknownError: return "發生未知錯誤"
             
         // 主页
-        case .memory: return "MEMORY"
+        case .memory: return "InnerBloom"
         case .searchDiary: return "搜尋日記..."
         case .noDiaryYet: return "目前還沒有日記"
         case .swipeLeftToCreate: return "向左滑動開始記錄你的第一篇日記"
@@ -329,6 +355,32 @@ enum L10nKey: String, CaseIterable {
         case .toneEmpathetic: return "共情理解"
         case .toneEmpatheticDesc: return "深度理解你的感受，給予共鳴"
             
+        // 问候语 & 欢迎语
+        case .greetingEarlyMorning: return "夜深了，還沒休息嗎？"
+        case .greetingMorning: return "早安！新的一天開始了～ "
+        case .greetingNoon: return "午安！吃過午飯了嗎？"
+        case .greetingAfternoon: return "下午好！"
+        case .greetingEvening: return "傍晚好！"
+        case .greetingNight: return "晚上好！"
+            
+        case .welcomePhotoInstant: return "%@這張照片看起來很有故事！想聊聊是在什麼情況下拍的嗎？"
+        case .welcomeVideoInstant: return "%@這段影片記錄了什麼特別的時刻呢？我很想聽你分享～"
+        case .welcomePhotoDefault: return "這張照片看起來很有故事，能跟我說說嗎？"
+        case .welcomeVideoDefault: return "這段影片記錄了什麼特別的時刻呢？"
+            
+        case .openerJoyfulPhoto: return "感受到這張照片裡的快樂氛圍了！能跟我分享一下嗎？"
+        case .openerJoyfulVideo: return "感受到這段影片裡的快樂氛圍了！能跟我分享一下嗎？"
+        case .openerPeacefulPhoto: return "這張照片給人很寧靜的感覺，是什麼讓你想記錄這個時刻？"
+        case .openerPeacefulVideo: return "這段影片給人很寧靜的感覺，是什麼讓你想記錄這個時刻？"
+        case .openerNostalgicPhoto: return "這張照片似乎有很多故事，願意跟我聊聊嗎？"
+        case .openerNostalgicVideo: return "這段影片似乎有很多故事，願意跟我聊聊嗎？"
+        case .openerAdventurous: return "看起來是一次很棒的經歷！能跟我說說發生了什麼嗎？"
+        case .openerTagTravel: return "這是旅途中的風景嗎？看起來很美，能說說這趟旅程嗎？"
+        case .openerTagFriends: return "和朋友在一起的時光總是特別的，這是什麼場合呢？"
+        case .openerTagFood: return "看起來很好吃的樣子！這是在哪裡享用的？"
+        case .openerDefaultPhoto: return "這張照片拍得很有感覺，能跟我說說背後的故事嗎？"
+        case .openerDefaultVideo: return "這段影片記錄了什麼特別的時刻呢？我很想聽你分享。"
+            
         // 隐私政策
         case .privacyPolicyTitle: return "隱私政策"
         case .dataCollection: return "資料收集"
@@ -365,7 +417,7 @@ enum L10nKey: String, CaseIterable {
         case .unknownError: return "An unknown error occurred"
             
         // Home
-        case .memory: return "MEMORY"
+        case .memory: return "InnerBloom"
         case .searchDiary: return "Search diary..."
         case .noDiaryYet: return "No diary entries yet"
         case .swipeLeftToCreate: return "Swipe left to create your first entry"
@@ -460,6 +512,32 @@ enum L10nKey: String, CaseIterable {
         case .toneHumorousDesc: return "Light and fun, making journaling enjoyable"
         case .toneEmpathetic: return "Empathetic"
         case .toneEmpatheticDesc: return "Deep understanding of your feelings"
+            
+        // Greetings & Welcome
+        case .greetingEarlyMorning: return "It's late, still awake? "
+        case .greetingMorning: return "Good morning! A new day begins~ "
+        case .greetingNoon: return "Good afternoon! Had lunch yet? "
+        case .greetingAfternoon: return "Good afternoon! "
+        case .greetingEvening: return "Good evening! "
+        case .greetingNight: return "Good evening! "
+            
+        case .welcomePhotoInstant: return "%@This photo looks like it has a story! Want to share what was happening when you took it?"
+        case .welcomeVideoInstant: return "%@What special moment does this video capture? I'd love to hear about it~"
+        case .welcomePhotoDefault: return "This photo seems to have a story. Can you tell me about it?"
+        case .welcomeVideoDefault: return "What special moment does this video capture?"
+            
+        case .openerJoyfulPhoto: return "I can feel the joyful vibe in this photo! Want to share more about it?"
+        case .openerJoyfulVideo: return "I can feel the joyful vibe in this video! Want to share more about it?"
+        case .openerPeacefulPhoto: return "This photo gives such a peaceful feeling. What made you want to capture this moment?"
+        case .openerPeacefulVideo: return "This video gives such a peaceful feeling. What made you want to capture this moment?"
+        case .openerNostalgicPhoto: return "This photo seems to hold many stories. Would you like to chat about it?"
+        case .openerNostalgicVideo: return "This video seems to hold many stories. Would you like to chat about it?"
+        case .openerAdventurous: return "Looks like an amazing experience! Can you tell me what happened?"
+        case .openerTagTravel: return "Is this scenery from a trip? It looks beautiful. Can you tell me about the journey?"
+        case .openerTagFriends: return "Time with friends is always special. What was the occasion?"
+        case .openerTagFood: return "That looks delicious! Where did you enjoy it?"
+        case .openerDefaultPhoto: return "This photo has a great feel to it. Can you tell me the story behind it?"
+        case .openerDefaultVideo: return "What special moment does this video capture? I'd love to hear about it."
             
         // Privacy Policy
         case .privacyPolicyTitle: return "Privacy Policy"

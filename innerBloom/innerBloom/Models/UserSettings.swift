@@ -117,6 +117,26 @@ enum AppLanguage: String, Codable, CaseIterable {
         case .en: return "🇺🇸"
         }
     }
+    
+    /// AI 回复强制语言指令（注入到所有 system prompt）
+    var aiLanguageInstruction: String {
+        switch self {
+        case .zhHant:
+            return """
+            ## 语言规则（最高优先级，不可违反）
+            - 你必须始终使用「繁體中文」回覆，無論用戶使用什麼語言輸入。
+            - 禁止使用簡體中文、英文或其他語言回覆。
+            - 所有輸出（包括 JSON 中的文字值）都必須是繁體中文。
+            """
+        case .en:
+            return """
+            ## Language Rule (Highest Priority, Must Not Violate)
+            - You MUST always reply in English, regardless of what language the user types in.
+            - Do NOT reply in Chinese, Japanese, or any other language.
+            - All output (including text values inside JSON) MUST be in English.
+            """
+        }
+    }
 }
 
 /// 用户设定模型 (D-007)

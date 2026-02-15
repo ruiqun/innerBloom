@@ -113,7 +113,7 @@ async function callOpenAI(messages: any[], model: string, maxTokens: number = 10
 // 处理媒体分析请求
 async function handleAnalyze(body: any) {
   const startTime = Date.now()
-  const { image_base64, media_type, user_context } = body
+  const { image_base64, media_type, user_context, language } = body
 
   if (!image_base64) {
     throw new Error('缺少图片数据')
@@ -121,15 +121,18 @@ async function handleAnalyze(body: any) {
 
   // 计算图片大小
   const imageSizeKB = Math.round(image_base64.length * 0.75 / 1024)
-  console.log(`[Analyze] ⏱️ Start | Image size: ${imageSizeKB}KB | Type: ${media_type}`)
+  console.log(`[Analyze] ⏱️ Start | Image size: ${imageSizeKB}KB | Type: ${media_type} | Language: ${language || 'zh-Hant'}`)
 
   let userPrompt = `请分析这张${media_type === 'video' ? '视频截图' : '照片'}`
   if (user_context) {
     userPrompt += `。用户说：${user_context}`
   }
 
+  // B-017: 语言规则放在最前面，分析结果（description、sceneTags、suggestedOpener）跟随语言设定
+  const systemContent = getLanguageInstruction(language) + '\n\n' + SYSTEM_PROMPTS.analyze
+
   const messages = [
-    { role: 'system', content: SYSTEM_PROMPTS.analyze },
+    { role: 'system', content: systemContent },
     {
       role: 'user',
       content: [
@@ -155,15 +158,32 @@ async function handleAnalyze(body: any) {
   try {
     return JSON.parse(response)
   } catch {
+    // B-017: fallback 跟随语言设定
+    const isEn = language === 'en'
     return {
       description: response,
-      sceneTags: ['生活', '日常'],
+      sceneTags: isEn ? ['life', 'daily'] : ['生活', '日常'],
       mood: 'peaceful',
-      suggestedOpener: '这张照片看起来很有故事，能跟我说说吗？',
+      suggestedOpener: isEn ? 'This photo looks like it has a story. Can you tell me about it?' : '这张照片看起来很有故事，能跟我说说吗？',
       hasPeople: null,
       confidence: 0.7
     }
   }
+}
+
+// B-017: 根据语言代码获取 AI 回复语言指令（与 App UserSettings.aiLanguageInstruction 一致）
+function getLanguageInstruction(language: string | undefined): string {
+  if (language === 'en') {
+    return `## Language Rule (Highest Priority, Must Not Violate)
+- You MUST always reply in English, regardless of what language the user types in.
+- Do NOT reply in Chinese, Japanese, or any other language.
+- All output (including text values inside JSON) MUST be in English.`
+  }
+  // 默认繁体中文
+  return `## 语言规则（最高优先级，不可违反）
+- 你必须始终使用「繁體中文」回覆，無論用戶使用什麼語言輸入。
+- 禁止使用簡體中文、英文或其他語言回覆。
+- 所有輸出（包括 JSON 中的文字值）都必須是繁體中文。`
 }
 
 // 构建"最懂你的好朋友"系统提示
@@ -213,7 +233,7 @@ function buildBestFriendPrompt(hasMediaAnalysis: boolean, hasEnvironment: boolea
 - **再次强调**：一次回复只能有一个问号，放在最后。不要用“...呢？比如...？”这种连续提问句式。
 
 ## 回复风格
-- 语言：跟随用户（繁体/简体中文）
+- 语言：严格遵守上方的「语言规则」，不得违反
 - 长度：3-6句话，温柔自然，不啰嗦
 - 不要每次都以问句结尾，可以分享感想后自然结束，或用轻松的邀请语
 
@@ -233,7 +253,7 @@ function buildBestFriendPrompt(hasMediaAnalysis: boolean, hasEnvironment: boolea
 
 // 处理聊天请求 (Best Friend Mode)
 async function handleChat(body: any) {
-  const { messages, analysis_context, environment_context } = body
+  const { messages, analysis_context, environment_context, language } = body
 
   if (!messages || messages.length === 0) {
     throw new Error('缺少消息')
@@ -242,8 +262,11 @@ async function handleChat(body: any) {
   const hasMediaAnalysis = !!analysis_context
   const hasEnvironment = !!environment_context
 
+  // B-017: 语言规则放在最前面（最高优先级）
+  let systemPrompt = getLanguageInstruction(language) + '\n\n'
+
   // 构建系统提示
-  let systemPrompt = buildBestFriendPrompt(hasMediaAnalysis, hasEnvironment)
+  systemPrompt += buildBestFriendPrompt(hasMediaAnalysis, hasEnvironment)
   
   // 构建上下文信息
   const contextParts: string[] = []

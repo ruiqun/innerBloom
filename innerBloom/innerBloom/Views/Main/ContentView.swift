@@ -317,7 +317,7 @@ struct ContentView: View {
         VStack(spacing: 16) {
             // 顶部 Header
             HStack {
-                Text("MEMORY")
+                Text("InnerBloom")
                     .font(.system(size: 16, weight: .medium, design: .serif))
                     .tracking(2)
                     .foregroundColor(Theme.textPrimary)
