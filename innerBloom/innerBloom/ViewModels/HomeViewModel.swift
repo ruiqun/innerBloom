@@ -1743,4 +1743,44 @@ final class HomeViewModel {
         errorMessage = nil
         showError = false
     }
+    
+    // MARK: - 登出清理 (B-018)
+    
+    /// 登出时重置所有状态
+    /// 清除内存数据 + 本机缓存/草稿
+    func resetForLogout() {
+        print("[HomeViewModel] 🔄 Resetting all data for logout...")
+        
+        // 1. 重置创建模式状态
+        resetCreatingState()
+        currentMode = .browsing
+        
+        // 2. 清空列表与标签
+        diaryEntries = []
+        availableTags = [Tag.all]
+        selectedTag = Tag.all
+        selectedDiary = nil
+        
+        // 3. 清空搜索
+        clearSearch()
+        
+        // 4. 清除本机草稿缓存
+        let drafts = draftManager.loadAllDrafts()
+        for draft in drafts {
+            try? draftManager.deleteDraft(id: draft.id)
+        }
+        
+        // 5. 清除错误状态
+        errorMessage = nil
+        showError = false
+        
+        print("[HomeViewModel] ✅ All data reset for logout")
+    }
+    
+    /// 登入后重新加载数据
+    func reloadAfterLogin() {
+        print("[HomeViewModel] 🔄 Reloading data after login...")
+        loadTags()
+        loadDiariesForCurrentTag()
+    }
 }

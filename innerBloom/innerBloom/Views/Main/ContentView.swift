@@ -78,8 +78,7 @@ struct ContentView: View {
         }
         // 隐藏默认 NavigationBar，使用自定义布局
         .navigationBarHidden(true)
-        // B-016: 根据用户设定应用外观模式
-        .preferredColorScheme(settingsManager.colorScheme)
+        // B-016: preferredColorScheme 已移至 innerBloomApp 全局统一设置
         // B-016: 设定页面
         .sheet(isPresented: $showSettings) {
             SettingsView()

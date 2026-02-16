@@ -5,6 +5,7 @@
 //  设定页面 - S-003
 //  B-016: 深色模式与多语言预留
 //  B-017: 多语言功能实现
+//  B-018: 添加帐号区块与登出按钮
 //
 
 import SwiftUI
@@ -16,6 +17,8 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Bindable private var settingsManager = SettingsManager.shared
     @Bindable private var localization = LocalizationManager.shared
+    @Bindable private var authManager = AuthManager.shared  // B-018
+    @State private var showLogoutConfirm = false  // B-018
     
     // MARK: - Body
     
@@ -28,6 +31,9 @@ struct SettingsView: View {
                 
                 ScrollView {
                     VStack(spacing: 24) {
+                        // B-018: 帐号区块
+                        accountSection
+                        
                         // B-016: 外观设定暂时隐藏，强制使用深色模式
                         // appearanceSection
                         
@@ -70,6 +76,15 @@ struct SettingsView: View {
         .preferredColorScheme(settingsManager.colorScheme)
         // B-017: 监听语言变化
         .id(localization.languageChangeId)
+        // B-018: 登出确认对话框
+        .alert(String.localized(.logoutConfirm), isPresented: $showLogoutConfirm) {
+            Button(String.localized(.cancel), role: .cancel) { }
+            Button(String.localized(.logout), role: .destructive) {
+                performLogout()
+            }
+        } message: {
+            Text(String.localized(.logoutConfirmDesc))
+        }
     }
     
     // MARK: - 外观设定
@@ -86,6 +101,83 @@ struct SettingsView: View {
                         settingsManager.setAppearanceMode(mode)
                     }
                 }
+            }
+        }
+    }
+    
+    // MARK: - 帐号区块 (B-018)
+    
+    private var accountSection: some View {
+        SettingsSection(title: String.localized(.account), icon: "person.circle.fill") {
+            VStack(spacing: 12) {
+                // 当前帐号信息
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(String.localized(.currentAccount))
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(Theme.textSecondary)
+                        
+                        Text(authManager.currentUserEmail ?? String.localized(.notLoggedIn))
+                            .font(.system(size: 15))
+                            .foregroundColor(Theme.textPrimary)
+                    }
+                    
+                    Spacer()
+                    
+                    // 登入状态指示
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(authManager.isAuthenticated ? Color.green : Color.red)
+                            .frame(width: 8, height: 8)
+                        
+                        Text(authManager.isAuthenticated
+                             ? String.localized(.connected)
+                             : String.localized(.notLoggedIn))
+                            .font(.system(size: 12))
+                            .foregroundColor(Theme.textSecondary)
+                    }
+                }
+                
+                if authManager.isAuthenticated {
+                    Divider()
+                        .background(Color.white.opacity(0.1))
+                    
+                    // 登出按钮
+                    Button(action: {
+                        showLogoutConfirm = true
+                    }) {
+                        HStack {
+                            Image(systemName: "rectangle.portrait.and.arrow.right")
+                                .font(.system(size: 14))
+                                .foregroundColor(.red.opacity(0.8))
+                            
+                            Text(String.localized(.logout))
+                                .font(.system(size: 15))
+                                .foregroundColor(.red.opacity(0.8))
+                            
+                            Spacer()
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+            }
+        }
+    }
+    
+    /// 执行登出 (B-018)
+    private func performLogout() {
+        Task {
+            // 1. 清理 HomeViewModel 数据
+            await MainActor.run {
+                HomeViewModel.shared.resetForLogout()
+            }
+            
+            // 2. 调用 AuthManager 登出
+            await authManager.signOut()
+            
+            // 3. 关闭设定页
+            await MainActor.run {
+                dismiss()
             }
         }
     }

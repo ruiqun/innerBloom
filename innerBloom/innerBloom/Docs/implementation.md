@@ -460,10 +460,28 @@
   - 使用方式：`String.localized(.keyName)` 或 `String.localized(.keyName, args:)`
 
 
-- [ ] **B-018**：加入登入/登出流程（F-017 + S-004）
-  - 接上 Supabase Auth（Email OTP 或 Email+密碼）
-  - App 啟動時判斷是否已登入：未登入就顯示 S-004
-  - 設定頁加入「登出」按鈕（登出後清理本機快取/草稿策略需明確）
+- [x] **B-018**：加入登入/登出流程（F-017 + S-004）
+  - 創建 AuthManager 認證管理器（Supabase Auth REST API）
+    - Email OTP 流程：發送驗證碼 → 驗證登入
+    - Email + 密碼流程：註冊 / 登入
+    - Session 管理（本機持久化、Token 自動刷新）
+    - 登出（通知服務端 + 清理本機 Session）
+  - 創建 LoginView 登入頁面（S-004）
+    - 支持兩種登入方式切換（OTP / 密碼）
+    - OTP 模式：輸入 Email → 發送驗證碼 → 輸入驗證碼登入
+    - 密碼模式：Email + 密碼登入/註冊切換
+    - Cinematic Dark Void 風格，與主頁一致
+    - 支援繁中/英文多語言
+  - 修改 innerBloomApp.swift
+    - App 啟動時判斷認證狀態（unknown / unauthenticated / authenticated）
+    - unknown：顯示啟動畫面（Splash）
+    - unauthenticated：顯示 LoginView（S-004）
+    - authenticated：顯示 ContentView（S-001）
+  - 設定頁加入「帳號」區塊
+    - 顯示當前登入帳號 Email 與連線狀態
+    - 登出按鈕 + 確認對話框
+    - 登出時清理 HomeViewModel 數據（列表、標籤、草稿）
+  - 添加 30+ 個本地化字符串（繁中/英文）覆蓋登入/登出全流程
 
 - [ ] **B-019**：資料庫多用戶隔離（F-018 + D-015/D-016）
   - DB：所有表新增 `user_id`，並補上索引（讓 10 萬用戶查詢也快）

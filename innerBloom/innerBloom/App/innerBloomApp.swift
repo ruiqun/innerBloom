@@ -5,6 +5,7 @@
 //  Created by Jeff Zheng on 2026/1/31.
 //
 //  B-010: App 启动时自动触发环境刷新（定位+天气）
+//  B-018: App 启动时判断登入状态，未登入显示 LoginView
 //
 
 import SwiftUI
@@ -15,20 +16,69 @@ struct innerBloomApp: App {
     /// 环境服务（App 级别单例）
     private let environmentService = EnvironmentService.shared
     
+    /// 认证管理器 (B-018)
+    @Bindable private var authManager = AuthManager.shared
+    
+    /// 设置管理器（用于全局外观模式）
+    @Bindable private var settingsManager = SettingsManager.shared
+    
     /// 场景阶段监听
     @Environment(\.scenePhase) private var scenePhase
     
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .onChange(of: scenePhase) { oldPhase, newPhase in
-                    handleScenePhaseChange(from: oldPhase, to: newPhase)
+            // B-018: 根据登入状态显示不同页面
+            Group {
+                switch authManager.authState {
+                case .unknown:
+                    // 启动中，显示 splash
+                    splashView
+                    
+                case .unauthenticated:
+                    // 未登入，显示登入页 (S-004)
+                    LoginView()
+                        .transition(.opacity)
+                    
+                case .authenticated:
+                    // 已登入，显示主页 (S-001)
+                    ContentView()
+                        .transition(.opacity)
                 }
-                .onAppear {
-                    // App 首次启动
-                    print("[App] 🚀 innerBloom launched")
-                    environmentService.onAppBecomeActive()
-                }
+            }
+            .animation(.easeInOut(duration: 0.3), value: authManager.authState)
+            .preferredColorScheme(settingsManager.colorScheme)
+            .onChange(of: scenePhase) { oldPhase, newPhase in
+                handleScenePhaseChange(from: oldPhase, to: newPhase)
+            }
+            .onAppear {
+                // App 首次启动
+                print("[App] 🚀 innerBloom launched")
+                environmentService.onAppBecomeActive()
+            }
+        }
+    }
+    
+    /// 启动画面（认证状态未确定时显示）
+    private var splashView: some View {
+        ZStack {
+            Theme.background
+                .ignoresSafeArea()
+            
+            VStack(spacing: 16) {
+                Image(systemName: "leaf.fill")
+                    .font(.system(size: 48))
+                    .foregroundColor(Theme.accent)
+                
+                Text("InnerBloom")
+                    .font(.system(size: 20, weight: .medium, design: .serif))
+                    .tracking(2)
+                    .foregroundColor(Theme.textPrimary)
+                
+                ProgressView()
+                    .progressViewStyle(CircularProgressViewStyle(tint: Theme.accent))
+                    .scaleEffect(0.8)
+                    .padding(.top, 8)
+            }
         }
     }
     
