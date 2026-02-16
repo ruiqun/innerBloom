@@ -265,6 +265,11 @@ enum L10nKey: String, CaseIterable {
     case yourRightsContent = "your_rights_content"
     case lastUpdated = "last_updated"
     
+    // MARK: - B-020 稳定性相关
+    case rateLimitMessage = "rate_limit_message"
+    case loadingMore = "loading_more"
+    case noMoreData = "no_more_data"
+    
     // MARK: - 本地化方法
     
     /// 获取指定语言的本地化字符串
@@ -472,6 +477,11 @@ enum L10nKey: String, CaseIterable {
         case .yourRights: return "您的權利"
         case .yourRightsContent: return "• 您可以在設定中關閉媒體分析和位置分享\n• 您可以隨時刪除您的日記和相關資料\n• 您可以聯繫我們請求匯出或刪除所有資料"
         case .lastUpdated: return "最後更新：2024年12月"
+            
+        // B-020 稳定性
+        case .rateLimitMessage: return "操作過於頻繁，請 %d 秒後再試"
+        case .loadingMore: return "載入更多..."
+        case .noMoreData: return "已載入全部"
         }
     }
     
@@ -670,6 +680,11 @@ enum L10nKey: String, CaseIterable {
         case .yourRights: return "Your Rights"
         case .yourRightsContent: return "• You can disable media analysis and location sharing in Settings\n• You can delete your diaries and related data at any time\n• You can contact us to export or delete all your data"
         case .lastUpdated: return "Last Updated: December 2024"
+            
+        // B-020 稳定性
+        case .rateLimitMessage: return "Too many requests, please try again in %d seconds"
+        case .loadingMore: return "Loading more..."
+        case .noMoreData: return "All loaded"
         }
     }
 }

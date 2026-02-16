@@ -47,6 +47,12 @@ struct innerBloomApp: App {
             }
             .animation(.easeInOut(duration: 0.3), value: authManager.authState)
             .preferredColorScheme(settingsManager.colorScheme)
+            .onChange(of: authManager.authState) { _, newState in
+                // B-018: 登入成功後從雲端重新載入回憶（修復登出再登入後回憶消失問題）
+                if newState == .authenticated {
+                    HomeViewModel.shared.reloadAfterLogin()
+                }
+            }
             .onChange(of: scenePhase) { oldPhase, newPhase in
                 handleScenePhaseChange(from: oldPhase, to: newPhase)
             }

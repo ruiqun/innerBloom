@@ -2,8 +2,9 @@
 //  SupabaseDatabaseService.swift
 //  innerBloom
 //
-//  Supabase Database 服务 - B-005, F-012, B-010 (F-005)
+//  Supabase Database 服务 - B-005, F-012, B-010 (F-005), B-020
 //  负责：日记数据的 CRUD 操作、云端同步、标签管理
+//  B-020: 自动重试 + 搜索分页
 //
 
 import Foundation
@@ -390,7 +391,8 @@ final class SupabaseDatabaseService {
     }
     
     /// 获取日记列表（B-013：支持按标签筛选，并加载每篇日记的 tagIds）
-    func getDiaries(tagId: UUID? = nil, limit: Int = 50, offset: Int = 0) async throws -> [DiaryEntry] {
+    /// B-020: 默认每页 20 条，支持分页加载
+    func getDiaries(tagId: UUID? = nil, limit: Int = 20, offset: Int = 0) async throws -> [DiaryEntry] {
         print("[DatabaseService] Getting diaries, tagId: \(tagId?.uuidString ?? "all")")
         
         guard config.isConfigured else {
@@ -440,13 +442,15 @@ final class SupabaseDatabaseService {
         return entries
     }
     
-    /// 搜索日记（B-014, F-008）
+    /// 搜索日记（B-014, F-008, B-020: 支持分页）
     /// - Parameters:
     ///   - keyword: 搜索关键字
     ///   - tagId: 可选的标签 ID，限制搜索范围
+    ///   - limit: 每页数量（B-020 分页）
+    ///   - offset: 偏移量（B-020 分页）
     /// - Returns: 匹配的日记列表
-    func searchDiaries(keyword: String, tagId: UUID? = nil) async throws -> [DiaryEntry] {
-        print("[DatabaseService] Searching diaries for: \(keyword), tagId: \(tagId?.uuidString ?? "all")")
+    func searchDiaries(keyword: String, tagId: UUID? = nil, limit: Int = 20, offset: Int = 0) async throws -> [DiaryEntry] {
+        print("[DatabaseService] Searching diaries for: \(keyword), tagId: \(tagId?.uuidString ?? "all"), limit: \(limit), offset: \(offset)")
         
         guard config.isConfigured else {
             throw DatabaseServiceError.notConfigured
@@ -458,10 +462,12 @@ final class SupabaseDatabaseService {
         
         var components = URLComponents(url: restURL.appendingPathComponent("diaries"), resolvingAgainstBaseURL: false)!
         
-        // 基础查询条件
+        // 基础查询条件（B-020: 加入 limit/offset 分页）
         var queryItems = [
             URLQueryItem(name: "order", value: "created_at.desc"),
-            URLQueryItem(name: "is_saved", value: "eq.true")
+            URLQueryItem(name: "is_saved", value: "eq.true"),
+            URLQueryItem(name: "limit", value: "\(limit)"),
+            URLQueryItem(name: "offset", value: "\(offset)")
         ]
         
         // 如果指定了标签，先获取该标签下的日记 IDs
@@ -856,11 +862,14 @@ final class SupabaseDatabaseService {
     
     // MARK: - Private Helpers
     
+    /// B-020: 带自动重试的请求执行
     private func performRequest(_ request: URLRequest) async throws -> (Data, URLResponse) {
-        do {
-            return try await session.data(for: request)
-        } catch {
-            throw DatabaseServiceError.networkError(error.localizedDescription)
+        return try await RetryHelper.withRetry(config: .database) {
+            do {
+                return try await self.session.data(for: request)
+            } catch {
+                throw DatabaseServiceError.networkError(error.localizedDescription)
+            }
         }
     }
 }

@@ -33,7 +33,7 @@ struct CircleImageView: View {
                         .frame(width: viewSize, height: viewSize)
                         .overlay(
                             Text(String.localized(.tapToUpload))
-                                .font(.caption)
+                                .font(.system(size: 14, weight: .semibold))
                                 .foregroundColor(Theme.textSecondary)
                         )
                 }

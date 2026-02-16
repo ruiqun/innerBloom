@@ -317,8 +317,8 @@ struct ContentView: View {
             // 顶部 Header
             HStack {
                 Text("InnerBloom")
-                    .font(.system(size: 16, weight: .medium, design: .serif))
-                    .tracking(2)
+                    .font(Theme.titleFont())
+                    .tracking(Theme.titleTracking)
                     .foregroundColor(Theme.textPrimary)
                 
                 Spacer()
@@ -374,7 +374,12 @@ struct ContentView: View {
                     },
                     onRetry: { entry in  // B-015: 重试回调
                         viewModel.retryCloudSync(for: entry.id)
-                    }
+                    },
+                    onEntryAppear: { entry in  // B-020: 无限滚动分页
+                        viewModel.onDiaryAppear(entry)
+                    },
+                    isLoadingMore: viewModel.isLoadingMore,
+                    hasMoreData: viewModel.hasMoreData
                 )
                 .padding(.top, 8)
             }

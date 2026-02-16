@@ -2,8 +2,9 @@
 //  SupabaseStorageService.swift
 //  innerBloom
 //
-//  Supabase Storage 服务 - B-004
+//  Supabase Storage 服务 - B-004, B-020
 //  负责：媒体文件上传到 Supabase Storage、获取云端路径
+//  B-020: 上传自动重试（指数退避）
 //
 
 import Foundation
@@ -273,59 +274,61 @@ final class SupabaseStorageService {
     
     /// 通用文件上传方法
     /// B-019: 使用 user JWT 認證，Storage RLS 驗證路徑歸屬
+    /// B-020: 添加自动重试（指数退避）
     private func uploadFile(data: Data, bucket: String, path: String, contentType: String) async throws -> StorageUploadResult {
         guard let storageURL = config.storageURL else {
             throw StorageServiceError.invalidURL
         }
         
-        // 构建上传 URL
-        let uploadURL = storageURL.appendingPathComponent("object/\(bucket)/\(path)")
-        let token = try await getAccessToken()
-        
-        // 构建请求（B-019: 使用 user JWT）
-        var request = URLRequest(url: uploadURL)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
-        request.setValue("true", forHTTPHeaderField: "x-upsert")
-        request.httpBody = data
-        
-        print("[StorageService] Uploading to: \(uploadURL)")
+        print("[StorageService] Uploading to bucket: \(bucket), path: \(path)")
         print("[StorageService] File size: \(data.count / 1024) KB")
         
-        do {
-            let (_, response) = try await session.data(for: request)
+        // B-020: 使用 RetryHelper 自动重试上传
+        return try await RetryHelper.withRetry(config: .upload) { [self] in
+            // 每次重试都重新获取 token（可能已刷新）
+            let uploadURL = storageURL.appendingPathComponent("object/\(bucket)/\(path)")
+            let token = try await self.getAccessToken()
             
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw StorageServiceError.invalidResponse
+            var request = URLRequest(url: uploadURL)
+            request.httpMethod = "POST"
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.setValue(self.config.anonKey, forHTTPHeaderField: "apikey")
+            request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+            request.setValue("true", forHTTPHeaderField: "x-upsert")
+            request.httpBody = data
+            
+            do {
+                let (_, response) = try await self.session.data(for: request)
+                
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw StorageServiceError.invalidResponse
+                }
+                
+                print("[StorageService] Response status: \(httpResponse.statusCode)")
+                
+                switch httpResponse.statusCode {
+                case 200, 201:
+                    let publicURL = self.config.publicURL(bucket: bucket, path: path)
+                    print("[StorageService] Upload successful: \(publicURL?.absoluteString ?? "N/A")")
+                    
+                    return StorageUploadResult(
+                        bucket: bucket,
+                        path: path,
+                        publicURL: publicURL
+                    )
+                    
+                case 401:
+                    throw StorageServiceError.unauthorized
+                    
+                default:
+                    throw StorageServiceError.uploadFailed(statusCode: httpResponse.statusCode)
+                }
+                
+            } catch let error as StorageServiceError {
+                throw error
+            } catch {
+                throw StorageServiceError.networkError(error.localizedDescription)
             }
-            
-            print("[StorageService] Response status: \(httpResponse.statusCode)")
-            
-            switch httpResponse.statusCode {
-            case 200, 201:
-                // 成功
-                let publicURL = config.publicURL(bucket: bucket, path: path)
-                print("[StorageService] Upload successful: \(publicURL?.absoluteString ?? "N/A")")
-                
-                return StorageUploadResult(
-                    bucket: bucket,
-                    path: path,
-                    publicURL: publicURL
-                )
-                
-            case 401:
-                throw StorageServiceError.unauthorized
-                
-            default:
-                throw StorageServiceError.uploadFailed(statusCode: httpResponse.statusCode)
-            }
-            
-        } catch let error as StorageServiceError {
-            throw error
-        } catch {
-            throw StorageServiceError.networkError(error.localizedDescription)
         }
     }
 }

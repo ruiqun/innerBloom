@@ -91,6 +91,21 @@ struct Theme {
         endPoint: .bottom
     )
     
+    // MARK: - 字体（与 InnerBloom 标题一致，列表预览等复用）
+    
+    /// 应用标题字体：16pt、medium、serif（用于「InnerBloom」及日记列表预览等）
+    static func titleFont() -> Font {
+        .system(size: 16, weight: .medium, design: .serif)
+    }
+    
+    /// 标题字间距
+    static let titleTracking: CGFloat = 2
+    
+    /// 列表辅助字体：serif 小号（日期、底部提示等，与标题风格协调）
+    static func listAuxiliaryFont() -> Font {
+        .system(size: 12, weight: .regular, design: .serif)
+    }
+    
     // MARK: - Styles
     
     /// Glassmorphism 背景材质

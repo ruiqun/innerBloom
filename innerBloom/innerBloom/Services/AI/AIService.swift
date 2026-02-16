@@ -2,8 +2,9 @@
 //  AIService.swift
 //  innerBloom
 //
-//  统一 AI 服务层 - F-015, B-008, B-009, B-010 (F-005)
+//  统一 AI 服务层 - F-015, B-008, B-009, B-010 (F-005), B-020
 //  职责：所有 AI 功能（分析、聊天、总结、标签）统一调用后端接口
+//  B-020: AI 调用自动重试（指数退避）
 //
 //  设计原则 (F-015):
 //  1. App 永远只呼叫「同一个后端网址」
@@ -380,43 +381,45 @@ final class AIService: AIServiceProtocol {
         
         print("[AIService] ⏱️ Prep time: \(String(format: "%.2f", prepTime))s | Image: \(imageData.count / 1024)KB → Base64: \(base64Size)KB")
         
-        // 6. 发送请求
+        // 6. 发送请求（B-020: 自动重试）
         let networkStart = CFAbsoluteTimeGetCurrent()
-        do {
-            let (data, response) = try await urlSession.data(for: request)
-            let networkTime = CFAbsoluteTimeGetCurrent() - networkStart
-            
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw AIServiceError.invalidResponse
+        let capturedRequest = request
+        let result: AIAnalysisResult = try await RetryHelper.withRetry(config: .ai) { [self] in
+            do {
+                let (data, response) = try await self.urlSession.data(for: capturedRequest)
+                
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw AIServiceError.invalidResponse
+                }
+                
+                guard (200...299).contains(httpResponse.statusCode) else {
+                    let errorMessage = String(data: data, encoding: .utf8)
+                    throw AIServiceError.serverError(statusCode: httpResponse.statusCode, message: errorMessage)
+                }
+                
+                return try JSONDecoder().decode(AIAnalysisResult.self, from: data)
+                
+            } catch let error as AIServiceError {
+                throw error
+            } catch let error as DecodingError {
+                throw AIServiceError.decodingError(error)
+            } catch {
+                if (error as NSError).code == NSURLErrorCancelled {
+                    throw AIServiceError.cancelled
+                }
+                if (error as NSError).code == NSURLErrorTimedOut {
+                    throw AIServiceError.timeout
+                }
+                throw AIServiceError.uploadFailed(error)
             }
-            
-            // 检查状态码
-            guard (200...299).contains(httpResponse.statusCode) else {
-                let errorMessage = String(data: data, encoding: .utf8)
-                throw AIServiceError.serverError(statusCode: httpResponse.statusCode, message: errorMessage)
-            }
-            
-            // 解析响应
-            let result = try JSONDecoder().decode(AIAnalysisResult.self, from: data)
-            let totalTime = CFAbsoluteTimeGetCurrent() - totalStart
-            
-            print("[AIService] ⏱️ Network+API time: \(String(format: "%.2f", networkTime))s | Total: \(String(format: "%.2f", totalTime))s")
-            print("[AIService] ✅ Analysis completed: \(result.description.prefix(50))...")
-            return result
-            
-        } catch let error as AIServiceError {
-            throw error
-        } catch let error as DecodingError {
-            throw AIServiceError.decodingError(error)
-        } catch {
-            if (error as NSError).code == NSURLErrorCancelled {
-                throw AIServiceError.cancelled
-            }
-            if (error as NSError).code == NSURLErrorTimedOut {
-                throw AIServiceError.timeout
-            }
-            throw AIServiceError.uploadFailed(error)
         }
+        
+        let networkTime = CFAbsoluteTimeGetCurrent() - networkStart
+        let totalTime = CFAbsoluteTimeGetCurrent() - totalStart
+        
+        print("[AIService] ⏱️ Network+API time: \(String(format: "%.2f", networkTime))s | Total: \(String(format: "%.2f", totalTime))s")
+        print("[AIService] ✅ Analysis completed: \(result.description.prefix(50))...")
+        return result
     }
     
     // MARK: - F-004: 聊天 (B-009, B-010)
@@ -484,53 +487,55 @@ final class AIService: AIServiceProtocol {
             language: userLanguage
         )
         
-        // 5. 发送请求
-        do {
-            let url = try endpoint.url(for: .chat)
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.timeoutInterval = requestTimeout
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("Bearer \(endpoint.apiKey)", forHTTPHeaderField: "Authorization")
-            
-            request.httpBody = try JSONEncoder().encode(edgeRequest)
-            
-            print("[AIService] Sending chat request to backend")
-            
-            let (data, response) = try await urlSession.data(for: request)
-            
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw AIServiceError.invalidResponse
+        // 5. 发送请求（B-020: 自动重试）
+        let chatUrl = try endpoint.url(for: .chat)
+        var chatRequest = URLRequest(url: chatUrl)
+        chatRequest.httpMethod = "POST"
+        chatRequest.timeoutInterval = requestTimeout
+        chatRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        chatRequest.setValue("Bearer \(endpoint.apiKey)", forHTTPHeaderField: "Authorization")
+        chatRequest.httpBody = try JSONEncoder().encode(edgeRequest)
+        
+        print("[AIService] Sending chat request to backend")
+        
+        let capturedChatRequest = chatRequest
+        let chatContent: String = try await RetryHelper.withRetry(config: .ai) { [self] in
+            do {
+                let (data, response) = try await self.urlSession.data(for: capturedChatRequest)
+                
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw AIServiceError.invalidResponse
+                }
+                
+                guard (200...299).contains(httpResponse.statusCode) else {
+                    let errorMessage = String(data: data, encoding: .utf8)
+                    throw AIServiceError.serverError(statusCode: httpResponse.statusCode, message: errorMessage)
+                }
+                
+                struct EdgeFunctionChatResponse: Codable {
+                    let content: String
+                }
+                
+                let chatResponse = try JSONDecoder().decode(EdgeFunctionChatResponse.self, from: data)
+                return chatResponse.content
+                
+            } catch let error as AIServiceError {
+                throw error
+            } catch let error as DecodingError {
+                throw AIServiceError.decodingError(error)
+            } catch {
+                if (error as NSError).code == NSURLErrorCancelled {
+                    throw AIServiceError.cancelled
+                }
+                if (error as NSError).code == NSURLErrorTimedOut {
+                    throw AIServiceError.timeout
+                }
+                throw AIServiceError.serverError(statusCode: -1, message: error.localizedDescription)
             }
-            
-            guard (200...299).contains(httpResponse.statusCode) else {
-                let errorMessage = String(data: data, encoding: .utf8)
-                throw AIServiceError.serverError(statusCode: httpResponse.statusCode, message: errorMessage)
-            }
-            
-            // 解析 Edge Function 响应
-            struct EdgeFunctionChatResponse: Codable {
-                let content: String
-            }
-            
-            let chatResponse = try JSONDecoder().decode(EdgeFunctionChatResponse.self, from: data)
-            
-            print("[AIService] Chat response received: \(chatResponse.content.prefix(50))...")
-            return chatResponse.content
-            
-        } catch let error as AIServiceError {
-            throw error
-        } catch let error as DecodingError {
-            throw AIServiceError.decodingError(error)
-        } catch {
-            if (error as NSError).code == NSURLErrorCancelled {
-                throw AIServiceError.cancelled
-            }
-            if (error as NSError).code == NSURLErrorTimedOut {
-                throw AIServiceError.timeout
-            }
-            throw AIServiceError.serverError(statusCode: -1, message: error.localizedDescription)
         }
+        
+        print("[AIService] Chat response received: \(chatContent.prefix(50))...")
+        return chatContent
     }
     
     /// 简化的聊天接口（使用当前上下文）
@@ -596,69 +601,75 @@ final class AIService: AIServiceProtocol {
         }
         
         // 4. 构建请求（适配 Supabase Edge Function）
+        // B-017: 传递语言设定，使总结完全跟随系统语言（繁体/英文）
         struct EdgeFunctionSummaryRequest: Codable {
             let messages: [[String: String]]
             let analysis_context: AIAnalysisContextDTO?
             let style: String?
             let environment_context: EnvironmentContextDTO?
+            let language: String?
         }
         
         let chatMessages = messages.map { msg -> [String: String] in
             ["role": msg.sender == .user ? "user" : "assistant", "content": msg.content]
         }
         
+        let userLanguage = SettingsManager.shared.appLanguage.rawValue
         let edgeRequest = EdgeFunctionSummaryRequest(
             messages: chatMessages,
             analysis_context: analysisContext.map { AIAnalysisContextDTO(from: $0) },
             style: style?.rawValue,
-            environment_context: environmentContext.map { EnvironmentContextDTO(from: $0) }
+            environment_context: environmentContext.map { EnvironmentContextDTO(from: $0) },
+            language: userLanguage
         )
         
-        // 5. 发送请求
-        do {
-            let url = try endpoint.url(for: .summary)
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.timeoutInterval = requestTimeout
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("Bearer \(endpoint.apiKey)", forHTTPHeaderField: "Authorization")
-            
-            request.httpBody = try JSONEncoder().encode(edgeRequest)
-            
-            print("[AIService] Sending summary request to backend")
-            
-            let (data, response) = try await urlSession.data(for: request)
-            
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw AIServiceError.invalidResponse
+        // 5. 发送请求（B-020: 自动重试）
+        let summaryUrl = try endpoint.url(for: .summary)
+        var summaryRequest = URLRequest(url: summaryUrl)
+        summaryRequest.httpMethod = "POST"
+        summaryRequest.timeoutInterval = requestTimeout
+        summaryRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        summaryRequest.setValue("Bearer \(endpoint.apiKey)", forHTTPHeaderField: "Authorization")
+        summaryRequest.httpBody = try JSONEncoder().encode(edgeRequest)
+        
+        print("[AIService] Sending summary request to backend")
+        
+        let capturedSummaryRequest = summaryRequest
+        let summaryContent: String = try await RetryHelper.withRetry(config: .ai) { [self] in
+            do {
+                let (data, response) = try await self.urlSession.data(for: capturedSummaryRequest)
+                
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw AIServiceError.invalidResponse
+                }
+                
+                guard (200...299).contains(httpResponse.statusCode) else {
+                    let errorMessage = String(data: data, encoding: .utf8)
+                    throw AIServiceError.serverError(statusCode: httpResponse.statusCode, message: errorMessage)
+                }
+                
+                struct EdgeFunctionSummaryResponse: Codable {
+                    let summary: String
+                    let title: String?
+                }
+                
+                let summaryResponse = try JSONDecoder().decode(EdgeFunctionSummaryResponse.self, from: data)
+                return summaryResponse.summary
+                
+            } catch let error as AIServiceError {
+                throw error
+            } catch let error as DecodingError {
+                throw AIServiceError.decodingError(error)
+            } catch {
+                if (error as NSError).code == NSURLErrorTimedOut {
+                    throw AIServiceError.timeout
+                }
+                throw AIServiceError.serverError(statusCode: -1, message: error.localizedDescription)
             }
-            
-            guard (200...299).contains(httpResponse.statusCode) else {
-                let errorMessage = String(data: data, encoding: .utf8)
-                throw AIServiceError.serverError(statusCode: httpResponse.statusCode, message: errorMessage)
-            }
-            
-            // 解析响应
-            struct EdgeFunctionSummaryResponse: Codable {
-                let summary: String
-                let title: String?
-            }
-            
-            let summaryResponse = try JSONDecoder().decode(EdgeFunctionSummaryResponse.self, from: data)
-            
-            print("[AIService] Summary generated: \(summaryResponse.summary.prefix(50))...")
-            return (summary: summaryResponse.summary, title: "")
-            
-        } catch let error as AIServiceError {
-            throw error
-        } catch let error as DecodingError {
-            throw AIServiceError.decodingError(error)
-        } catch {
-            if (error as NSError).code == NSURLErrorTimedOut {
-                throw AIServiceError.timeout
-            }
-            throw AIServiceError.serverError(statusCode: -1, message: error.localizedDescription)
         }
+        
+        print("[AIService] Summary generated: \(summaryContent.prefix(50))...")
+        return (summary: summaryContent, title: "")
     }
     
     // MARK: - F-005: 标签生成（B-010 实现）
@@ -694,69 +705,74 @@ final class AIService: AIServiceProtocol {
             return mockGenerateTags(messages: messages, analysisContext: analysisContext, existingTags: existingTags)
         }
         
-        // 4. 构建请求
+        // 4. 构建请求（B-017: 传递语言设定，使标签完全跟随系统语言）
         struct EdgeFunctionTagsRequest: Codable {
             let messages: [[String: String]]
             let analysis_context: AIAnalysisContextDTO?
             let style: String?
             let existing_tags: [String]?
+            let language: String?
         }
         
         let chatMessages = messages.map { msg -> [String: String] in
             ["role": msg.sender == .user ? "user" : "assistant", "content": msg.content]
         }
         
+        let userLanguage = SettingsManager.shared.appLanguage.rawValue
         let edgeRequest = EdgeFunctionTagsRequest(
             messages: chatMessages,
             analysis_context: analysisContext.map { AIAnalysisContextDTO(from: $0) },
             style: style?.rawValue,
-            existing_tags: existingTags.isEmpty ? nil : existingTags
+            existing_tags: existingTags.isEmpty ? nil : existingTags,
+            language: userLanguage
         )
         
-        // 5. 发送请求
-        do {
-            let url = try endpoint.url(for: .tags)
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.timeoutInterval = requestTimeout
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("Bearer \(endpoint.apiKey)", forHTTPHeaderField: "Authorization")
-            
-            request.httpBody = try JSONEncoder().encode(edgeRequest)
-            
-            print("[AIService] Sending tags request to backend")
-            
-            let (data, response) = try await urlSession.data(for: request)
-            
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw AIServiceError.invalidResponse
+        // 5. 发送请求（B-020: 自动重试）
+        let tagsUrl = try endpoint.url(for: .tags)
+        var tagsRequest = URLRequest(url: tagsUrl)
+        tagsRequest.httpMethod = "POST"
+        tagsRequest.timeoutInterval = requestTimeout
+        tagsRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        tagsRequest.setValue("Bearer \(endpoint.apiKey)", forHTTPHeaderField: "Authorization")
+        tagsRequest.httpBody = try JSONEncoder().encode(edgeRequest)
+        
+        print("[AIService] Sending tags request to backend")
+        
+        let capturedTagsRequest = tagsRequest
+        let tags: [String] = try await RetryHelper.withRetry(config: .ai) { [self] in
+            do {
+                let (data, response) = try await self.urlSession.data(for: capturedTagsRequest)
+                
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw AIServiceError.invalidResponse
+                }
+                
+                guard (200...299).contains(httpResponse.statusCode) else {
+                    let errorMessage = String(data: data, encoding: .utf8)
+                    throw AIServiceError.serverError(statusCode: httpResponse.statusCode, message: errorMessage)
+                }
+                
+                struct EdgeFunctionTagsResponse: Codable {
+                    let tags: [String]
+                }
+                
+                let tagsResponse = try JSONDecoder().decode(EdgeFunctionTagsResponse.self, from: data)
+                return tagsResponse.tags
+                
+            } catch let error as AIServiceError {
+                throw error
+            } catch let error as DecodingError {
+                throw AIServiceError.decodingError(error)
+            } catch {
+                if (error as NSError).code == NSURLErrorTimedOut {
+                    throw AIServiceError.timeout
+                }
+                throw AIServiceError.serverError(statusCode: -1, message: error.localizedDescription)
             }
-            
-            guard (200...299).contains(httpResponse.statusCode) else {
-                let errorMessage = String(data: data, encoding: .utf8)
-                throw AIServiceError.serverError(statusCode: httpResponse.statusCode, message: errorMessage)
-            }
-            
-            // 解析响应
-            struct EdgeFunctionTagsResponse: Codable {
-                let tags: [String]
-            }
-            
-            let tagsResponse = try JSONDecoder().decode(EdgeFunctionTagsResponse.self, from: data)
-            
-            print("[AIService] Tags generated: \(tagsResponse.tags)")
-            return tagsResponse.tags
-            
-        } catch let error as AIServiceError {
-            throw error
-        } catch let error as DecodingError {
-            throw AIServiceError.decodingError(error)
-        } catch {
-            if (error as NSError).code == NSURLErrorTimedOut {
-                throw AIServiceError.timeout
-            }
-            throw AIServiceError.serverError(statusCode: -1, message: error.localizedDescription)
         }
+        
+        print("[AIService] Tags generated: \(tags)")
+        return tags
     }
     
     // MARK: - F-005: OpenAI 直连总结生成（开发模式）

@@ -318,13 +318,16 @@ async function handleChat(body: any) {
   }
 }
 
-// 处理总结生成请求
+// 处理总结生成请求（B-017: 根据 language 注入语言指令，总结跟随系统设定）
 async function handleSummary(body: any) {
-  const { messages, analysis_context } = body
+  const { messages, analysis_context, language } = body
 
   if (!messages || messages.length === 0) {
     throw new Error('缺少消息')
   }
+
+  // 语言规则最高优先级，再拼接总结专用提示
+  const systemContent = getLanguageInstruction(language) + '\n\n' + SYSTEM_PROMPTS.summary
 
   // 构建对话内容
   const conversationText = messages
@@ -340,7 +343,7 @@ async function handleSummary(body: any) {
   prompt += '请根据以上内容，生成一篇使用者口吻的日记。'
 
   const openaiMessages = [
-    { role: 'system', content: SYSTEM_PROMPTS.summary },
+    { role: 'system', content: systemContent },
     { role: 'user', content: prompt }
   ]
 
@@ -358,17 +361,17 @@ async function handleSummary(body: any) {
   }
 }
 
-// 处理标签生成请求
+// 处理标签生成请求（B-017: 根据 language 注入语言指令，标签跟随系统设定）
 async function handleTags(body: any) {
-  const { messages, analysis_context, existing_tags } = body
+  const { messages, analysis_context, existing_tags, language } = body
 
   // 构建对话内容
   const conversationText = messages
     ?.map((m: any) => `${m.role === 'user' ? '用户' : 'AI'}：${m.content}`)
     .join('\n') || ''
 
-  // 构建系统提示（如果有已存在的标签，添加优先复用规则）
-  let systemPrompt = SYSTEM_PROMPTS.tags
+  // 语言规则最高优先级，再拼接标签专用提示
+  let systemPrompt = getLanguageInstruction(language) + '\n\n' + SYSTEM_PROMPTS.tags
   
   if (existing_tags && existing_tags.length > 0) {
     systemPrompt += `
@@ -406,9 +409,10 @@ async function handleTags(body: any) {
     const tags = JSON.parse(response)
     return { tags: Array.isArray(tags) ? tags : [] }
   } catch {
-    // 尝试从文本中提取标签
+    // 尝试从文本中提取标签；解析失败时按语言返回默认标签（B-017）
     const matches = response.match(/["']([^"']+)["']/g)
-    const tags = matches?.map(m => m.replace(/["']/g, '')) || ['生活', '日记']
+    const defaultTags = language === 'en' ? ['life', 'diary'] : ['生活', '日記']
+    const tags = matches?.map(m => m.replace(/["']/g, '')) || defaultTags
     return { tags }
   }
 }

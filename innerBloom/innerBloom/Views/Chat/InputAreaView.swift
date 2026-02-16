@@ -138,12 +138,15 @@ struct InputAreaView: View {
         TextField("", text: $inputText, axis: .vertical)
             .placeholder(when: inputText.isEmpty && !isRecording) {
                 Text(String.localized(.shareYourMood))
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(Theme.textSecondary.opacity(0.5))
             }
             .placeholder(when: inputText.isEmpty && isRecording) {
                 Text(String.localized(.listening))
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(Color.red.opacity(0.6))
             }
+            .font(.system(size: 14, weight: .semibold))
             .textFieldStyle(.plain)
             .foregroundColor(Theme.textPrimary)
             .focused($isTextFieldFocused)

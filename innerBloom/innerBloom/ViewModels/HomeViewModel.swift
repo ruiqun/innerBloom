@@ -8,6 +8,7 @@
 //  B-008: 接入 AI 分析（F-003）
 //  B-009: 接入 AI 连续聊天（F-004）
 //  B-010: 环境感知整合（F-016 + D-012）+ 结束保存 + 总结/标签生成（F-005）
+//  B-020: 无限滚动分页 + 客户端用量保护
 //
 
 import Foundation
@@ -62,6 +63,20 @@ final class HomeViewModel {
     
     /// 是否正在加载
     var isLoading: Bool = false
+    
+    // MARK: - 分页状态 (B-020)
+    
+    /// 每页加载数量
+    private let pageSize: Int = 20
+    
+    /// 当前偏移量
+    private var currentOffset: Int = 0
+    
+    /// 是否还有更多数据可加载
+    var hasMoreData: Bool = true
+    
+    /// 是否正在加载更多
+    var isLoadingMore: Bool = false
     
     // MARK: - 搜索相关 (B-014, F-008)
     
@@ -360,7 +375,7 @@ final class HomeViewModel {
     
     // MARK: - 搜索操作 (B-014, F-008)
     
-    /// 执行搜索
+    /// 执行搜索 (B-020: 用量保护)
     func performSearch() {
         let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         
@@ -373,6 +388,14 @@ final class HomeViewModel {
         isSearching = true
         
         Task {
+            // B-020: 搜索用量保护
+            let rateLimitResult = await RateLimiter.search.checkAndRecord()
+            if !rateLimitResult.isAllowed {
+                // 搜索被限流时，短暂等待后执行
+                if let waitTime = rateLimitResult.retryAfterSeconds {
+                    try? await Task.sleep(nanoseconds: UInt64(waitTime * 1_000_000_000))
+                }
+            }
             await searchDiaries(keyword: keyword)
         }
     }
@@ -385,7 +408,7 @@ final class HomeViewModel {
         print("[HomeViewModel] Search cleared")
     }
     
-    /// 从云端搜索日记
+    /// 从云端搜索日记（B-020: 分页搜索）
     @MainActor
     private func searchDiaries(keyword: String) async {
         defer { isSearching = false }
@@ -402,7 +425,8 @@ final class HomeViewModel {
         do {
             // 根据当前选中的标签决定搜索范围
             let tagId = selectedTag.id.uuidString == "00000000-0000-0000-0000-000000000000" ? nil : selectedTag.id
-            let results = try await databaseService.searchDiaries(keyword: keyword, tagId: tagId)
+            // B-020: 搜索也使用分页（默认 20 条）
+            let results = try await databaseService.searchDiaries(keyword: keyword, tagId: tagId, limit: pageSize, offset: 0)
             searchResults = results
             print("[HomeViewModel] Search results: \(results.count)")
         } catch {
@@ -436,7 +460,7 @@ final class HomeViewModel {
         return false
     }
     
-    /// 从云端加载日记
+    /// 从云端加载日记（B-020: 分页首次加载）
     @MainActor
     private func loadDiariesFromCloud() async {
         defer { isLoading = false }
@@ -447,14 +471,23 @@ final class HomeViewModel {
             return
         }
         
+        // B-020: 重置分页状态
+        currentOffset = 0
+        hasMoreData = true
+        
         do {
             // 如果选中「全部」标签，传 nil；否则传标签 ID
             let tagId = selectedTag.id.uuidString == "00000000-0000-0000-0000-000000000000" ? nil : selectedTag.id
-            let entries = try await databaseService.getDiaries(tagId: tagId)
+            let entries = try await databaseService.getDiaries(tagId: tagId, limit: pageSize, offset: 0)
             
             // 先显示日记列表（不阻塞 UI）
             diaryEntries = entries
-            print("[HomeViewModel] Diaries loaded from cloud: \(entries.count)")
+            
+            // B-020: 判断是否还有更多数据
+            hasMoreData = entries.count >= pageSize
+            currentOffset = entries.count
+            
+            print("[HomeViewModel] Diaries loaded from cloud: \(entries.count), hasMore: \(hasMoreData)")
             
             // 开发模式：后台静默清理旧日记（不阻塞启动）
             if DevConfig.shouldCleanCloud && entries.count > 1 {
@@ -465,6 +498,54 @@ final class HomeViewModel {
         } catch {
             print("[HomeViewModel] Failed to load diaries: \(error)")
             diaryEntries = []
+        }
+    }
+    
+    /// B-020: 加载更多日记（无限滚动）
+    @MainActor
+    func loadMoreDiaries() async {
+        guard !isLoadingMore && hasMoreData && !isLoading else {
+            return
+        }
+        
+        guard networkMonitor.isConnected else {
+            print("[HomeViewModel] Offline, cannot load more")
+            return
+        }
+        
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+        
+        do {
+            let tagId = selectedTag.id.uuidString == "00000000-0000-0000-0000-000000000000" ? nil : selectedTag.id
+            let newEntries = try await databaseService.getDiaries(tagId: tagId, limit: pageSize, offset: currentOffset)
+            
+            // 去重后追加
+            let existingIds = Set(diaryEntries.map { $0.id })
+            let uniqueNewEntries = newEntries.filter { !existingIds.contains($0.id) }
+            diaryEntries.append(contentsOf: uniqueNewEntries)
+            
+            // 更新分页状态
+            hasMoreData = newEntries.count >= pageSize
+            currentOffset += newEntries.count
+            
+            print("[HomeViewModel] Loaded more diaries: +\(uniqueNewEntries.count), total: \(diaryEntries.count), hasMore: \(hasMoreData)")
+        } catch {
+            print("[HomeViewModel] Failed to load more diaries: \(error)")
+        }
+    }
+    
+    /// B-020: 当列表滚到接近底部时触发加载更多
+    func onDiaryAppear(_ entry: DiaryEntry) {
+        // 当显示到倒数第 5 条时，提前加载下一页
+        guard hasMoreData, !isLoadingMore else { return }
+        
+        let thresholdIndex = max(0, diaryEntries.count - 5)
+        if let index = diaryEntries.firstIndex(where: { $0.id == entry.id }),
+           index >= thresholdIndex {
+            Task {
+                await loadMoreDiaries()
+            }
         }
     }
     
@@ -623,7 +704,7 @@ final class HomeViewModel {
         selectedStyle = .warm       // Reset style
     }
     
-    /// 结束保存 (F-005, B-004, B-008, B-010)
+    /// 结束保存 (F-005, B-004, B-008, B-010, B-020: 用量保护)
     /// 采用 Optimistic UI + Background Processing 模式
     /// 第一阶段：前台毫秒级响应
     /// 第二阶段：后台静默处理
@@ -635,8 +716,19 @@ final class HomeViewModel {
             return
         }
         
-        // ========== 第一阶段：前台立即响应（MainActor，毫秒级）==========
-        performImmediateUIUpdate()
+        // B-020: 保存用量保护
+        Task { @MainActor in
+            let rateLimitResult = await RateLimiter.save.checkAndRecord()
+            guard rateLimitResult.isAllowed else {
+                if let waitTime = rateLimitResult.retryAfterSeconds {
+                    showErrorMessage(String.localized(.rateLimitMessage, args: Int(ceil(waitTime))))
+                }
+                return
+            }
+            
+            // ========== 第一阶段：前台立即响应（MainActor，毫秒级）==========
+            performImmediateUIUpdate()
+        }
     }
     
     // MARK: - 第一阶段：前台立即响应（Optimistic UI）
@@ -1321,7 +1413,7 @@ final class HomeViewModel {
     /// 是否正在发送消息
     var isSendingMessage: Bool = false
     
-    /// 发送用户消息 (B-009: 真正的 AI 聊天)
+    /// 发送用户消息 (B-009: 真正的 AI 聊天, B-020: 用量保护)
     func sendMessage(_ text: String) {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         guard !isSendingMessage else {
@@ -1331,16 +1423,25 @@ final class HomeViewModel {
         
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         
-        // 添加用户消息到列表
-        let userMsg = ChatMessage(sender: .user, content: trimmedText)
-        chatMessages.append(userMsg)
-        print("[HomeViewModel] User sent message: \(trimmedText)")
-        
-        // 更新草稿并保存到本机 (D-003)
-        updateDraftMessages()
-        
-        // 调用 AI 服务获取回复 (B-009)
+        // B-020: 客户端用量保护
         Task { @MainActor in
+            let rateLimitResult = await RateLimiter.aiChat.checkAndRecord()
+            guard rateLimitResult.isAllowed else {
+                if let waitTime = rateLimitResult.retryAfterSeconds {
+                    showErrorMessage(String.localized(.rateLimitMessage, args: Int(ceil(waitTime))))
+                }
+                return
+            }
+            
+            // 添加用户消息到列表
+            let userMsg = ChatMessage(sender: .user, content: trimmedText)
+            chatMessages.append(userMsg)
+            print("[HomeViewModel] User sent message: \(trimmedText)")
+            
+            // 更新草稿并保存到本机 (D-003)
+            updateDraftMessages()
+            
+            // 调用 AI 服务获取回复 (B-009)
             await sendToAIService(userMessage: trimmedText)
         }
     }
