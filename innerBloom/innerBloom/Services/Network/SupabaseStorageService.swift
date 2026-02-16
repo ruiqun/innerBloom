@@ -65,6 +65,7 @@ enum StorageServiceError: LocalizedError, Equatable {
 
 /// Supabase Storage 服务
 /// 单例模式，负责所有媒体文件的云端上传
+/// B-019: 支援多用戶隔離（路徑加入 user_id 前綴、使用 user JWT 認證）
 final class SupabaseStorageService {
     
     // MARK: - Singleton
@@ -84,6 +85,32 @@ final class SupabaseStorageService {
         configuration.timeoutIntervalForRequest = 60
         configuration.timeoutIntervalForResource = 300 // 5 分钟超时（大文件上传）
         self.session = URLSession(configuration: configuration)
+    }
+    
+    // MARK: - B-019 Auth Helpers（多用戶隔離）
+    
+    /// 取得當前登入使用者的 Access Token
+    private func getAccessToken() async throws -> String {
+        guard let token = await AuthManager.shared.getValidAccessToken() else {
+            print("[StorageService] ⚠️ No valid access token")
+            throw StorageServiceError.unauthorized
+        }
+        return token
+    }
+    
+    /// 取得當前登入使用者的 user_id（用於路徑前綴）
+    private var currentUserId: String? {
+        AuthManager.shared.currentUserId
+    }
+    
+    /// 為檔案路徑加上 user_id 前綴（D-016: {user_id}/{type}/{diaryId}.ext）
+    /// 如果未登入則不加前綴（向前兼容）
+    private func userPrefixedPath(_ path: String) -> String {
+        guard let userId = currentUserId else {
+            print("[StorageService] ⚠️ No user_id available, using path without prefix")
+            return path
+        }
+        return "\(userId)/\(path)"
     }
     
     // MARK: - Public Methods
@@ -107,9 +134,9 @@ final class SupabaseStorageService {
             throw StorageServiceError.invalidResponse
         }
         
-        // 3. 生成文件路径
+        // 3. 生成文件路径（B-019: 加入 user_id 前綴）
         let fileName = "\(diaryId.uuidString).jpg"
-        let filePath = "images/\(fileName)"
+        let filePath = userPrefixedPath("images/\(fileName)")
         
         // 4. 上传
         return try await uploadFile(
@@ -133,9 +160,9 @@ final class SupabaseStorageService {
             throw StorageServiceError.notConfigured
         }
         
-        // 2. 生成文件路径
+        // 2. 生成文件路径（B-019: 加入 user_id 前綴）
         let fileName = "\(diaryId.uuidString).mp4"
-        let filePath = "videos/\(fileName)"
+        let filePath = userPrefixedPath("videos/\(fileName)")
         
         // 3. 上传
         return try await uploadFile(
@@ -164,9 +191,9 @@ final class SupabaseStorageService {
             throw StorageServiceError.invalidResponse
         }
         
-        // 3. 生成文件路径
+        // 3. 生成文件路径（B-019: 加入 user_id 前綴）
         let fileName = "\(diaryId.uuidString)_thumb.jpg"
-        let filePath = "thumbnails/\(fileName)"
+        let filePath = userPrefixedPath("thumbnails/\(fileName)")
         
         // 4. 上传
         return try await uploadFile(
@@ -206,6 +233,7 @@ final class SupabaseStorageService {
     }
     
     /// 删除云端文件
+    /// B-019: RLS 確保只能刪除本人檔案
     /// - Parameters:
     ///   - bucket: Bucket 名称
     ///   - path: 文件路径
@@ -221,10 +249,11 @@ final class SupabaseStorageService {
         }
         
         let url = storageURL.appendingPathComponent("object/\(bucket)/\(path)")
+        let token = try await getAccessToken()
         
         var request = URLRequest(url: url)
         request.httpMethod = "DELETE"
-        request.setValue("Bearer \(config.anonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
         
         let (_, response) = try await session.data(for: request)
@@ -243,6 +272,7 @@ final class SupabaseStorageService {
     // MARK: - Private Methods
     
     /// 通用文件上传方法
+    /// B-019: 使用 user JWT 認證，Storage RLS 驗證路徑歸屬
     private func uploadFile(data: Data, bucket: String, path: String, contentType: String) async throws -> StorageUploadResult {
         guard let storageURL = config.storageURL else {
             throw StorageServiceError.invalidURL
@@ -250,14 +280,15 @@ final class SupabaseStorageService {
         
         // 构建上传 URL
         let uploadURL = storageURL.appendingPathComponent("object/\(bucket)/\(path)")
+        let token = try await getAccessToken()
         
-        // 构建请求
+        // 构建请求（B-019: 使用 user JWT）
         var request = URLRequest(url: uploadURL)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(config.anonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
         request.setValue(contentType, forHTTPHeaderField: "Content-Type")
-        request.setValue("true", forHTTPHeaderField: "x-upsert") // 覆盖已存在的文件
+        request.setValue("true", forHTTPHeaderField: "x-upsert")
         request.httpBody = data
         
         print("[StorageService] Uploading to: \(uploadURL)")

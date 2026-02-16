@@ -483,11 +483,22 @@
     - 登出時清理 HomeViewModel 數據（列表、標籤、草稿）
   - 添加 30+ 個本地化字符串（繁中/英文）覆蓋登入/登出全流程
 
-- [ ] **B-019**：資料庫多用戶隔離（F-018 + D-015/D-016）
-  - DB：所有表新增 `user_id`，並補上索引（讓 10 萬用戶查詢也快）
-  - DB：設定資料保護規則（只允許本人讀寫自己的資料）
-  - Storage：改成 `{user_id}/...` 路徑，並設定規則只允許本人讀寫自己的檔案
-  - App：所有讀寫都自動帶入當前 `user_id`（列表/詳情/搜尋/標籤/同步重試）
+- [x] **B-019**：資料庫多用戶隔離（F-018 + D-015/D-016）
+  - DB：所有表（diaries、messages、tags、diary_tags）新增 `user_id` 欄位，引用 `auth.users(id)`
+  - DB：新增效能索引（`user_id`、`user_id + created_at DESC`）支援 10 萬用戶快速查詢
+  - DB：替換 RLS 策略為 `auth.uid() = user_id`（每張表 4 條策略：SELECT/INSERT/UPDATE/DELETE）
+  - DB：tags 表唯一約束改為 `(user_id, name)`，不同使用者可擁有同名標籤
+  - Storage：路徑格式改為 `{user_id}/images/{diaryId}.jpg`、`{user_id}/videos/{diaryId}.mp4`、`{user_id}/thumbnails/{diaryId}_thumb.jpg`
+  - Storage：RLS 策略用 `storage.foldername(name)[1]` 驗證路徑歸屬，公開讀取保留
+  - App - SupabaseDatabaseService：
+    - 所有 HTTP 請求改用 user JWT（`AuthManager.getValidAccessToken()`）而非 anon key
+    - 新增 `authenticatedRequest()` 統一建立帶認證的請求
+    - DiaryAPIModel、MessageAPIModel、TagAPIModel 新增 `user_id` 欄位
+    - 所有 INSERT/UPSERT 自動帶入 `currentUserId`
+  - App - SupabaseStorageService：
+    - 所有上傳/刪除請求改用 user JWT
+    - 新增 `userPrefixedPath()` 自動為檔案路徑加上 `{user_id}/` 前綴
+  - App - HomeViewModel：無需額外修改，RLS 自動過濾本人資料
 
 - [ ] **B-020**：10 萬用戶的基本穩定性加強（上線前必做）
   - 列表/搜尋一律分頁載入（不要一次抓全部）

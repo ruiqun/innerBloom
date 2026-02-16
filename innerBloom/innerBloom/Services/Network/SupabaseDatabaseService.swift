@@ -63,6 +63,7 @@ enum DatabaseServiceError: LocalizedError, Equatable {
 // MARK: - API Models
 
 /// 日记 API 模型（用于与 Supabase 通信）
+/// B-019: 新增 user_id 欄位，支援多用戶資料隔離
 struct DiaryAPIModel: Codable {
     let id: UUID
     let createdAt: Date
@@ -82,6 +83,7 @@ struct DiaryAPIModel: Codable {
     let isSaved: Bool
     let syncStatus: String
     let lastErrorMessage: String?
+    let userId: String?            // B-019: 多用戶隔離
     
     enum CodingKeys: String, CodingKey {
         case id
@@ -102,10 +104,11 @@ struct DiaryAPIModel: Codable {
         case isSaved = "is_saved"
         case syncStatus = "sync_status"
         case lastErrorMessage = "last_error_message"
+        case userId = "user_id"
     }
     
-    /// 从 DiaryEntry 转换
-    init(from entry: DiaryEntry) {
+    /// 从 DiaryEntry 转换（B-019: 自动带入当前 user_id）
+    init(from entry: DiaryEntry, userId: String? = nil) {
         self.id = entry.id
         self.createdAt = entry.createdAt
         self.updatedAt = entry.updatedAt
@@ -124,6 +127,7 @@ struct DiaryAPIModel: Codable {
         self.isSaved = entry.isSaved
         self.syncStatus = entry.syncStatus.rawValue
         self.lastErrorMessage = entry.lastErrorMessage
+        self.userId = userId
     }
     
     /// 转换为 DiaryEntry
@@ -155,12 +159,14 @@ struct DiaryAPIModel: Codable {
 }
 
 /// 消息 API 模型
+/// B-019: 新增 user_id 欄位
 struct MessageAPIModel: Codable {
     let id: UUID
     let diaryId: UUID
     let sender: String
     let content: String
     let timestamp: Date
+    let userId: String?    // B-019: 多用戶隔離
     
     enum CodingKeys: String, CodingKey {
         case id
@@ -168,14 +174,16 @@ struct MessageAPIModel: Codable {
         case sender
         case content
         case timestamp
+        case userId = "user_id"
     }
     
-    init(from message: ChatMessage, diaryId: UUID) {
+    init(from message: ChatMessage, diaryId: UUID, userId: String? = nil) {
         self.id = message.id
         self.diaryId = diaryId
         self.sender = message.sender.rawValue
         self.content = message.content
         self.timestamp = message.timestamp
+        self.userId = userId
     }
     
     func toChatMessage() -> ChatMessage {
@@ -189,6 +197,7 @@ struct MessageAPIModel: Codable {
 }
 
 /// 标签 API 模型
+/// B-019: 新增 user_id 欄位
 struct TagAPIModel: Codable {
     let id: UUID
     let name: String
@@ -196,11 +205,13 @@ struct TagAPIModel: Codable {
     let icon: String?
     let isSystem: Bool
     let sortOrder: Int
+    let userId: String?    // B-019: 多用戶隔離
     
     enum CodingKeys: String, CodingKey {
         case id, name, color, icon
         case isSystem = "is_system"
         case sortOrder = "sort_order"
+        case userId = "user_id"
     }
     
     func toTag() -> Tag {
@@ -247,9 +258,37 @@ final class SupabaseDatabaseService {
         self.encoder.dateEncodingStrategy = .iso8601
     }
     
+    // MARK: - B-019 Auth Helpers（多用戶隔離）
+    
+    /// 取得當前登入使用者的 Access Token（用於 Authorization header）
+    /// RLS 需要 user JWT 才能判斷 auth.uid()
+    private func getAccessToken() async throws -> String {
+        guard let token = await AuthManager.shared.getValidAccessToken() else {
+            print("[DatabaseService] ⚠️ No valid access token, user not authenticated")
+            throw DatabaseServiceError.unauthorized
+        }
+        return token
+    }
+    
+    /// 取得當前登入使用者的 user_id
+    private var currentUserId: String? {
+        AuthManager.shared.currentUserId
+    }
+    
+    /// 建立帶有認證的 URLRequest（B-019: 使用 user JWT 而非 anon key）
+    private func authenticatedRequest(url: URL, method: String = "GET") async throws -> URLRequest {
+        let token = try await getAccessToken()
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        return request
+    }
+    
     // MARK: - Diary CRUD
     
     /// 创建或更新日记（Upsert）
+    /// B-019: 自動帶入 user_id，使用 user JWT 認證
     func upsertDiary(_ entry: DiaryEntry) async throws -> DiaryEntry {
         print("[DatabaseService] Upserting diary: \(entry.id)")
         
@@ -262,14 +301,10 @@ final class SupabaseDatabaseService {
         }
         
         let url = restURL.appendingPathComponent("diaries")
-        let apiModel = DiaryAPIModel(from: entry)
+        let apiModel = DiaryAPIModel(from: entry, userId: currentUserId)
         
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(config.anonKey)", forHTTPHeaderField: "Authorization")
-        request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        var request = try await authenticatedRequest(url: url, method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        // 合并 Prefer header：返回数据 + 合并重复项
         request.setValue("return=representation, resolution=merge-duplicates", forHTTPHeaderField: "Prefer")
         
         do {
@@ -320,6 +355,7 @@ final class SupabaseDatabaseService {
     }
     
     /// 获取单个日记
+    /// B-019: RLS 自動過濾只回傳本人資料
     func getDiary(id: UUID) async throws -> DiaryEntry {
         print("[DatabaseService] Getting diary: \(id)")
         
@@ -334,10 +370,7 @@ final class SupabaseDatabaseService {
         var components = URLComponents(url: restURL.appendingPathComponent("diaries"), resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "id", value: "eq.\(id.uuidString)")]
         
-        var request = URLRequest(url: components.url!)
-        request.httpMethod = "GET"
-        request.setValue("Bearer \(config.anonKey)", forHTTPHeaderField: "Authorization")
-        request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        let request = try await authenticatedRequest(url: components.url!)
         
         let (data, _) = try await performRequest(request)
         
@@ -388,10 +421,8 @@ final class SupabaseDatabaseService {
         
         components.queryItems = queryItems
         
-        var request = URLRequest(url: components.url!)
-        request.httpMethod = "GET"
-        request.setValue("Bearer \(config.anonKey)", forHTTPHeaderField: "Authorization")
-        request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        // B-019: 使用 user JWT 認證，RLS 自動過濾
+        let request = try await authenticatedRequest(url: components.url!)
         
         let (data, _) = try await performRequest(request)
         
@@ -451,10 +482,8 @@ final class SupabaseDatabaseService {
         
         components.queryItems = queryItems
         
-        var request = URLRequest(url: components.url!)
-        request.httpMethod = "GET"
-        request.setValue("Bearer \(config.anonKey)", forHTTPHeaderField: "Authorization")
-        request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        // B-019: 使用 user JWT 認證，RLS 自動過濾
+        let request = try await authenticatedRequest(url: components.url!)
         
         let (data, _) = try await performRequest(request)
         
@@ -479,6 +508,7 @@ final class SupabaseDatabaseService {
     }
     
     /// 删除日记
+    /// B-019: RLS 確保只能刪除本人資料
     func deleteDiary(id: UUID) async throws {
         print("[DatabaseService] Deleting diary: \(id)")
         
@@ -493,10 +523,7 @@ final class SupabaseDatabaseService {
         var components = URLComponents(url: restURL.appendingPathComponent("diaries"), resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "id", value: "eq.\(id.uuidString)")]
         
-        var request = URLRequest(url: components.url!)
-        request.httpMethod = "DELETE"
-        request.setValue("Bearer \(config.anonKey)", forHTTPHeaderField: "Authorization")
-        request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        let request = try await authenticatedRequest(url: components.url!, method: "DELETE")
         
         let (_, response) = try await performRequest(request)
         
@@ -509,6 +536,7 @@ final class SupabaseDatabaseService {
     }
     
     /// 删除标签
+    /// B-019: RLS 確保只能刪除本人標籤
     func deleteTag(id: UUID) async throws {
         print("[DatabaseService] Deleting tag: \(id)")
         
@@ -524,10 +552,7 @@ final class SupabaseDatabaseService {
         var tagComponents = URLComponents(url: restURL.appendingPathComponent("diary_tags"), resolvingAgainstBaseURL: false)!
         tagComponents.queryItems = [URLQueryItem(name: "tag_id", value: "eq.\(id.uuidString)")]
         
-        var tagRequest = URLRequest(url: tagComponents.url!)
-        tagRequest.httpMethod = "DELETE"
-        tagRequest.setValue("Bearer \(config.anonKey)", forHTTPHeaderField: "Authorization")
-        tagRequest.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        let tagRequest = try await authenticatedRequest(url: tagComponents.url!, method: "DELETE")
         
         let (_, tagResponse) = try await performRequest(tagRequest)
         
@@ -541,10 +566,7 @@ final class SupabaseDatabaseService {
         var components = URLComponents(url: restURL.appendingPathComponent("tags"), resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "id", value: "eq.\(id.uuidString)")]
         
-        var request = URLRequest(url: components.url!)
-        request.httpMethod = "DELETE"
-        request.setValue("Bearer \(config.anonKey)", forHTTPHeaderField: "Authorization")
-        request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        let request = try await authenticatedRequest(url: components.url!, method: "DELETE")
         
         let (_, response) = try await performRequest(request)
         
@@ -559,6 +581,7 @@ final class SupabaseDatabaseService {
     // MARK: - Messages
     
     /// 保存消息
+    /// B-019: 自動帶入 user_id
     func saveMessages(_ messages: [ChatMessage], for diaryId: UUID) async throws {
         print("[DatabaseService] Saving \(messages.count) messages for diary: \(diaryId)")
         
@@ -575,14 +598,12 @@ final class SupabaseDatabaseService {
         // 先删除旧消息
         try await deleteMessages(for: diaryId)
         
-        // 插入新消息
+        // 插入新消息（B-019: 帶入 user_id）
         let url = restURL.appendingPathComponent("messages")
-        let apiModels = messages.map { MessageAPIModel(from: $0, diaryId: diaryId) }
+        let userId = currentUserId
+        let apiModels = messages.map { MessageAPIModel(from: $0, diaryId: diaryId, userId: userId) }
         
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(config.anonKey)", forHTTPHeaderField: "Authorization")
-        request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        var request = try await authenticatedRequest(url: url, method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
         request.httpBody = try encoder.encode(apiModels)
@@ -598,6 +619,7 @@ final class SupabaseDatabaseService {
     }
     
     /// 获取消息
+    /// B-019: RLS 自動過濾只回傳本人資料
     func getMessages(for diaryId: UUID) async throws -> [ChatMessage] {
         guard config.isConfigured else {
             throw DatabaseServiceError.notConfigured
@@ -613,10 +635,7 @@ final class SupabaseDatabaseService {
             URLQueryItem(name: "order", value: "timestamp.asc")
         ]
         
-        var request = URLRequest(url: components.url!)
-        request.httpMethod = "GET"
-        request.setValue("Bearer \(config.anonKey)", forHTTPHeaderField: "Authorization")
-        request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        let request = try await authenticatedRequest(url: components.url!)
         
         let (data, _) = try await performRequest(request)
         
@@ -625,6 +644,7 @@ final class SupabaseDatabaseService {
     }
     
     /// 删除消息
+    /// B-019: RLS 確保只刪除本人消息
     private func deleteMessages(for diaryId: UUID) async throws {
         guard let restURL = config.restURL else {
             throw DatabaseServiceError.invalidURL
@@ -633,10 +653,7 @@ final class SupabaseDatabaseService {
         var components = URLComponents(url: restURL.appendingPathComponent("messages"), resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "diary_id", value: "eq.\(diaryId.uuidString)")]
         
-        var request = URLRequest(url: components.url!)
-        request.httpMethod = "DELETE"
-        request.setValue("Bearer \(config.anonKey)", forHTTPHeaderField: "Authorization")
-        request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        let request = try await authenticatedRequest(url: components.url!, method: "DELETE")
         
         _ = try await performRequest(request)
     }
@@ -644,6 +661,7 @@ final class SupabaseDatabaseService {
     // MARK: - Tags
     
     /// 根据名称查找或创建标签 (F-005)
+    /// B-019: RLS 自動限定在本人標籤範圍內查找/創建
     func findOrCreateTag(name: String) async throws -> Tag {
         print("[DatabaseService] Finding or creating tag: \(name)")
         
@@ -655,14 +673,11 @@ final class SupabaseDatabaseService {
             throw DatabaseServiceError.invalidURL
         }
         
-        // 1. 先尝试查找已有标签
+        // 1. 先尝试查找已有标签（RLS 自動過濾只搜本人標籤）
         var searchComponents = URLComponents(url: restURL.appendingPathComponent("tags"), resolvingAgainstBaseURL: false)!
         searchComponents.queryItems = [URLQueryItem(name: "name", value: "eq.\(name)")]
         
-        var searchRequest = URLRequest(url: searchComponents.url!)
-        searchRequest.httpMethod = "GET"
-        searchRequest.setValue("Bearer \(config.anonKey)", forHTTPHeaderField: "Authorization")
-        searchRequest.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        let searchRequest = try await authenticatedRequest(url: searchComponents.url!)
         
         let (searchData, _) = try await performRequest(searchRequest)
         let existingTags = try decoder.decode([TagAPIModel].self, from: searchData)
@@ -672,7 +687,7 @@ final class SupabaseDatabaseService {
             return existingTag.toTag()
         }
         
-        // 2. 不存在则创建新标签
+        // 2. 不存在则创建新标签（B-019: 帶入 user_id）
         print("[DatabaseService] Creating new tag: \(name)")
         
         let createURL = restURL.appendingPathComponent("tags")
@@ -682,20 +697,19 @@ final class SupabaseDatabaseService {
             let name: String
             let sort_order: Int
             let is_system: Bool
+            let user_id: String?   // B-019: 多用戶隔離
         }
         
         let newTagId = UUID()
         let tagInsert = TagInsert(
             id: newTagId,
             name: name,
-            sort_order: 100, // 用户标签排在系统标签后面
-            is_system: false
+            sort_order: 100,
+            is_system: false,
+            user_id: currentUserId
         )
         
-        var createRequest = URLRequest(url: createURL)
-        createRequest.httpMethod = "POST"
-        createRequest.setValue("Bearer \(config.anonKey)", forHTTPHeaderField: "Authorization")
-        createRequest.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        var createRequest = try await authenticatedRequest(url: createURL, method: "POST")
         createRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         createRequest.setValue("return=representation", forHTTPHeaderField: "Prefer")
         
@@ -720,6 +734,7 @@ final class SupabaseDatabaseService {
     }
     
     /// 获取所有标签
+    /// B-019: RLS 自動過濾只回傳本人標籤
     func getTags() async throws -> [Tag] {
         print("[DatabaseService] Getting all tags")
         
@@ -734,10 +749,7 @@ final class SupabaseDatabaseService {
         var components = URLComponents(url: restURL.appendingPathComponent("tags"), resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "order", value: "sort_order.asc")]
         
-        var request = URLRequest(url: components.url!)
-        request.httpMethod = "GET"
-        request.setValue("Bearer \(config.anonKey)", forHTTPHeaderField: "Authorization")
-        request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        let request = try await authenticatedRequest(url: components.url!)
         
         let (data, _) = try await performRequest(request)
         
@@ -746,6 +758,7 @@ final class SupabaseDatabaseService {
     }
     
     /// 保存日记标签关联
+    /// B-019: 自動帶入 user_id
     func saveDiaryTags(diaryId: UUID, tagIds: [UUID]) async throws {
         print("[DatabaseService] Saving tags for diary: \(diaryId)")
         
@@ -762,20 +775,19 @@ final class SupabaseDatabaseService {
         // 先删除旧关联
         try await deleteDiaryTags(diaryId: diaryId)
         
-        // 插入新关联
+        // 插入新关联（B-019: 帶入 user_id）
         let url = restURL.appendingPathComponent("diary_tags")
         
         struct DiaryTagInsert: Codable {
             let diary_id: UUID
             let tag_id: UUID
+            let user_id: String?   // B-019: 多用戶隔離
         }
         
-        let inserts = tagIds.map { DiaryTagInsert(diary_id: diaryId, tag_id: $0) }
+        let userId = currentUserId
+        let inserts = tagIds.map { DiaryTagInsert(diary_id: diaryId, tag_id: $0, user_id: userId) }
         
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(config.anonKey)", forHTTPHeaderField: "Authorization")
-        request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        var request = try await authenticatedRequest(url: url, method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
         request.httpBody = try encoder.encode(inserts)
@@ -786,6 +798,7 @@ final class SupabaseDatabaseService {
     }
     
     /// 获取日记的标签 IDs
+    /// B-019: RLS 自動過濾
     private func getTagIds(for diaryId: UUID) async throws -> [UUID] {
         guard let restURL = config.restURL else {
             throw DatabaseServiceError.invalidURL
@@ -794,10 +807,7 @@ final class SupabaseDatabaseService {
         var components = URLComponents(url: restURL.appendingPathComponent("diary_tags"), resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "diary_id", value: "eq.\(diaryId.uuidString)")]
         
-        var request = URLRequest(url: components.url!)
-        request.httpMethod = "GET"
-        request.setValue("Bearer \(config.anonKey)", forHTTPHeaderField: "Authorization")
-        request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        let request = try await authenticatedRequest(url: components.url!)
         
         struct DiaryTagResult: Codable {
             let tag_id: UUID
@@ -809,6 +819,7 @@ final class SupabaseDatabaseService {
     }
     
     /// 获取标签下的日记 IDs
+    /// B-019: RLS 自動過濾
     private func getDiaryIds(for tagId: UUID) async throws -> [UUID] {
         guard let restURL = config.restURL else {
             throw DatabaseServiceError.invalidURL
@@ -817,10 +828,7 @@ final class SupabaseDatabaseService {
         var components = URLComponents(url: restURL.appendingPathComponent("diary_tags"), resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "tag_id", value: "eq.\(tagId.uuidString)")]
         
-        var request = URLRequest(url: components.url!)
-        request.httpMethod = "GET"
-        request.setValue("Bearer \(config.anonKey)", forHTTPHeaderField: "Authorization")
-        request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        let request = try await authenticatedRequest(url: components.url!)
         
         struct DiaryTagResult: Codable {
             let diary_id: UUID
@@ -832,6 +840,7 @@ final class SupabaseDatabaseService {
     }
     
     /// 删除日记标签关联
+    /// B-019: RLS 確保只刪除本人關聯
     private func deleteDiaryTags(diaryId: UUID) async throws {
         guard let restURL = config.restURL else {
             throw DatabaseServiceError.invalidURL
@@ -840,10 +849,7 @@ final class SupabaseDatabaseService {
         var components = URLComponents(url: restURL.appendingPathComponent("diary_tags"), resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "diary_id", value: "eq.\(diaryId.uuidString)")]
         
-        var request = URLRequest(url: components.url!)
-        request.httpMethod = "DELETE"
-        request.setValue("Bearer \(config.anonKey)", forHTTPHeaderField: "Authorization")
-        request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        let request = try await authenticatedRequest(url: components.url!, method: "DELETE")
         
         _ = try await performRequest(request)
     }
