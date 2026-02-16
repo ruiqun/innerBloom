@@ -4,7 +4,7 @@
 //
 //  操作按钮组件 - F-005
 //  B-017: 多语言支持
-//  Style: Cinematic, Emerald Accent
+//  Style: Cinematic, Gold Accent
 //
 
 import SwiftUI
@@ -41,7 +41,7 @@ struct ActionButtonsView: View {
                     if isSaving {
                         ProgressView()
                             .scaleEffect(0.8)
-                            .tint(.black)
+                            .tint(Color(red: 0.08, green: 0.07, blue: 0.04))
                     } else {
                         Image(systemName: "heart.fill")
                             .font(.system(size: 14, weight: .medium))
@@ -49,7 +49,7 @@ struct ActionButtonsView: View {
                             .font(.system(size: 14, weight: .semibold))
                     }
                 }
-                .foregroundColor(canSave ? .black : Theme.textSecondary.opacity(0.5))
+                .foregroundColor(canSave ? Color(red: 0.08, green: 0.07, blue: 0.04) : Theme.textSecondary.opacity(0.5))
                 .padding(.horizontal, 20)
                 .padding(.vertical, 12)
                 .background(

@@ -186,11 +186,11 @@ struct InputAreaView: View {
                 if isSending {
                     ProgressView()
                         .scaleEffect(0.8)
-                        .tint(canSend ? .black : Theme.textSecondary)
+                        .tint(canSend ? Color(red: 0.08, green: 0.07, blue: 0.04) : Theme.textSecondary)
                 } else {
                     Image(systemName: "arrow.up")
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(canSend ? .black : Theme.textSecondary.opacity(0.5))
+                        .foregroundColor(canSend ? Color(red: 0.08, green: 0.07, blue: 0.04) : Theme.textSecondary.opacity(0.5))
                 }
             }
         }

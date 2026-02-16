@@ -65,9 +65,10 @@ struct innerBloomApp: App {
                 .ignoresSafeArea()
             
             VStack(spacing: 16) {
-                Image(systemName: "leaf.fill")
+                Image(systemName: "crown.fill")
                     .font(.system(size: 48))
                     .foregroundColor(Theme.accent)
+                    .shadow(color: Theme.goldLight.opacity(0.3), radius: 10, x: 0, y: 0)
                 
                 Text("InnerBloom")
                     .font(.system(size: 20, weight: .medium, design: .serif))

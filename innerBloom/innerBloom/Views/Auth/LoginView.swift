@@ -4,6 +4,7 @@
 //
 //  登入/註冊頁面 - S-004, B-018
 //  支持：Email OTP（一次性驗證碼）/ Email + 密碼
+//  V2: Dark Luxury Gold 風格升級
 //
 
 import SwiftUI
@@ -46,11 +47,11 @@ struct LoginView: View {
     
     var body: some View {
         ZStack {
-            // 背景
+            // 背景（暖黑漸層）
             Theme.background
                 .ignoresSafeArea()
             
-            // 微妙粒子背景
+            // 微妙金色背景裝飾
             backgroundDecoration
             
             ScrollView(showsIndicators: false) {
@@ -115,23 +116,37 @@ struct LoginView: View {
         .id(localization.languageChangeId)
     }
     
-    // MARK: - Logo 區域
+    // MARK: - Logo 區域（金色皇冠 + 深色玻璃擬態 + 金色光暈）
     
     private var logoSection: some View {
         VStack(spacing: 16) {
-            // App Logo
+            // App Logo — 深色玻璃擬態圓形 + 金色皇冠
             ZStack {
+                // 極淡金色光暈（精品招牌燈感）
                 Circle()
-                    .fill(Theme.accent.opacity(0.1))
+                    .fill(Theme.goldLight.opacity(0.08))
+                    .frame(width: 120, height: 120)
+                    .blur(radius: 20)
+                
+                // 深色玻璃擬態底
+                Circle()
+                    .fill(.ultraThinMaterial)
                     .frame(width: 100, height: 100)
                 
                 Circle()
-                    .stroke(Theme.accent.opacity(0.3), lineWidth: 1)
+                    .fill(Color.black.opacity(0.5))
                     .frame(width: 100, height: 100)
                 
-                Image(systemName: "leaf.fill")
-                    .font(.system(size: 40))
+                // 極細金色描邊（1px）
+                Circle()
+                    .stroke(Theme.accent.opacity(0.4), lineWidth: 1)
+                    .frame(width: 100, height: 100)
+                
+                // 金色皇冠圖標
+                Image(systemName: "crown.fill")
+                    .font(.system(size: 38))
                     .foregroundColor(Theme.accent)
+                    .shadow(color: Theme.goldLight.opacity(0.3), radius: 8, x: 0, y: 0)
             }
             
             // 歡迎文字
@@ -231,19 +246,23 @@ struct LoginView: View {
             HStack(spacing: 8) {
                 if authManager.isLoading {
                     ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                        .progressViewStyle(CircularProgressViewStyle(tint: .black))
                         .scaleEffect(0.8)
                 }
                 
                 Text(primaryButtonText)
                     .font(.system(size: 16, weight: .semibold))
             }
-            .foregroundColor(.white)
+            .foregroundColor(.black)
             .frame(maxWidth: .infinity)
             .frame(height: 52)
             .background(
                 RoundedRectangle(cornerRadius: 14)
                     .fill(primaryButtonEnabled ? Theme.accent : Theme.accent.opacity(0.3))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(Theme.goldLight.opacity(primaryButtonEnabled ? 0.3 : 0), lineWidth: 0.5)
             )
         }
         .disabled(!primaryButtonEnabled || authManager.isLoading)
@@ -295,10 +314,10 @@ struct LoginView: View {
     
     private var switchModeSection: some View {
         VStack(spacing: 16) {
-            // 分隔線
+            // 分隔線（金色點綴）
             HStack {
                 Rectangle()
-                    .fill(Color.white.opacity(0.1))
+                    .fill(Theme.accent.opacity(0.12))
                     .frame(height: 0.5)
                 
                 Text(String.localized(.orContinueWith))
@@ -307,7 +326,7 @@ struct LoginView: View {
                     .fixedSize()
                 
                 Rectangle()
-                    .fill(Color.white.opacity(0.1))
+                    .fill(Theme.accent.opacity(0.12))
                     .frame(height: 0.5)
             }
             
@@ -379,23 +398,39 @@ struct LoginView: View {
         .padding(.top, 8)
     }
     
-    // MARK: - 背景裝飾
+    // MARK: - 背景裝飾（金色抽象幾何色塊 + 光暈）
     
     private var backgroundDecoration: some View {
         ZStack {
-            // 頂部光暈
+            // 頂部金色光暈（柔和，非常輕）
             Circle()
-                .fill(Theme.accent.opacity(0.05))
+                .fill(Theme.goldLight.opacity(0.04))
                 .frame(width: 300, height: 300)
                 .blur(radius: 80)
                 .offset(x: -50, y: -200)
             
-            // 底部光暈
+            // 底部暖金光暈
             Circle()
-                .fill(Theme.accent.opacity(0.03))
+                .fill(Theme.goldLight.opacity(0.025))
                 .frame(width: 250, height: 250)
                 .blur(radius: 60)
                 .offset(x: 80, y: 300)
+            
+            // 抽象金色幾何切片（右上角，10-15% 不透明度）
+            RoundedRectangle(cornerRadius: 4)
+                .fill(Theme.accent.opacity(0.06))
+                .frame(width: 80, height: 120)
+                .rotationEffect(.degrees(-25))
+                .offset(x: 140, y: -320)
+                .blur(radius: 2)
+            
+            // 左下角金箔片裝飾
+            RoundedRectangle(cornerRadius: 2)
+                .fill(Theme.goldDeep.opacity(0.05))
+                .frame(width: 60, height: 90)
+                .rotationEffect(.degrees(15))
+                .offset(x: -150, y: 280)
+                .blur(radius: 1)
         }
     }
     
@@ -405,7 +440,7 @@ struct LoginView: View {
         VStack {
             HStack(spacing: 10) {
                 Image(systemName: "checkmark.circle.fill")
-                    .foregroundColor(.green)
+                    .foregroundColor(Theme.accent)
                 
                 Text(String.localized(.codeSentDesc, args: email))
                     .font(.system(size: 13))
@@ -418,7 +453,7 @@ struct LoginView: View {
                     .fill(Color.white.opacity(0.1))
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color.green.opacity(0.3), lineWidth: 0.5)
+                            .stroke(Theme.accent.opacity(0.3), lineWidth: 0.5)
                     )
             )
             .padding(.top, 60)
@@ -434,7 +469,7 @@ struct LoginView: View {
         VStack {
             HStack(spacing: 10) {
                 Image(systemName: "checkmark.circle.fill")
-                    .foregroundColor(.green)
+                    .foregroundColor(Theme.accent)
                 
                 Text(String.localized(.signUpSuccessDesc))
                     .font(.system(size: 13))
@@ -447,7 +482,7 @@ struct LoginView: View {
                     .fill(Color.white.opacity(0.1))
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color.green.opacity(0.3), lineWidth: 0.5)
+                            .stroke(Theme.accent.opacity(0.3), lineWidth: 0.5)
                     )
             )
             .padding(.top, 60)

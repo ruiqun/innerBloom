@@ -127,7 +127,7 @@ struct SettingsView: View {
                     // 登入状态指示
                     HStack(spacing: 6) {
                         Circle()
-                            .fill(authManager.isAuthenticated ? Color.green : Color.red)
+                            .fill(authManager.isAuthenticated ? Theme.accent : Color.red)
                             .frame(width: 8, height: 8)
                         
                         Text(authManager.isAuthenticated
@@ -391,7 +391,7 @@ struct SettingsView: View {
                     
                     HStack(spacing: 6) {
                         Circle()
-                            .fill(SupabaseConfig.shared.isConfigured ? Color.green : Color.red)
+                            .fill(SupabaseConfig.shared.isConfigured ? Theme.accent : Color.red)
                             .frame(width: 8, height: 8)
                         
                         Text(SupabaseConfig.shared.isConfigured ? String.localized(.connected) : String.localized(.notConfigured))

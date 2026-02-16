@@ -37,8 +37,8 @@ class ParticleManager: ObservableObject {
         setupBindings()
     }
     
-    /// 与 Theme.background 深色模式一致的背景色 (r:0.02, g:0.02, b:0.03)
-    static let sceneBackgroundColor = UIColor(red: 0.02, green: 0.02, blue: 0.03, alpha: 1.0)
+    /// 与 Theme.background 深色模式一致的暖黑背景色
+    static let sceneBackgroundColor = UIColor(red: 0.051, green: 0.047, blue: 0.035, alpha: 1.0)
     
     private func setupScene() {
         scene.background.contents = ParticleManager.sceneBackgroundColor

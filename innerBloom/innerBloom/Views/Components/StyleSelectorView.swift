@@ -22,7 +22,7 @@ struct StyleSelectorView: View {
                 }) {
                     Text(style.displayName)
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(selectedStyle == style ? .black : Theme.textSecondary)
+                        .foregroundColor(selectedStyle == style ? Color(red: 0.08, green: 0.07, blue: 0.04) : Theme.textSecondary)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
                         .background(
