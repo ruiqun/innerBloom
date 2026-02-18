@@ -28,10 +28,12 @@ struct CompanionRoleSheet: View {
                 ScrollView {
                     VStack(spacing: 16) {
                         ForEach(AIToneStyle.allCases, id: \.self) { role in
+                            let isPremium = iapManager.premiumStatus.isPremium
+                            let isLocked = !isPremium && role != .empathetic
                             CompanionRoleCard(
                                 role: role,
                                 isSelected: settingsManager.aiToneStyle == role,
-                                isLocked: !iapManager.premiumStatus.isPremium
+                                isLocked: isLocked
                             ) {
                                 handleRoleTap(role)
                             }
@@ -60,11 +62,10 @@ struct CompanionRoleSheet: View {
     }
     
     private func handleRoleTap(_ role: AIToneStyle) {
-        if iapManager.premiumStatus.isPremium {
+        if iapManager.premiumStatus.isPremium || role == .empathetic {
             settingsManager.setAIToneStyle(role)
             dismiss()
         } else {
-            // F-025: 非 Premium 點選 → 直接導去 S-005
             showPremium = true
         }
     }

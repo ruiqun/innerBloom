@@ -360,32 +360,42 @@ final class AIService: AIServiceProtocol {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(endpoint.apiKey)", forHTTPHeaderField: "Authorization")
         
-        // 5. 构建请求体（Base64 编码图片）
-        let base64Image = imageData.base64EncodedString()
-        let base64Size = base64Image.count / 1024
+        // 5. 构建请求体（Base64 + JSON 在背景线程完成，避免阻塞主线程）
+        let capturedMediaType = mediaType
+        let capturedUserContext = userContext
+        let capturedImageData = imageData
+        let userLanguage = await MainActor.run { SettingsManager.shared.appLanguage.rawValue }
+        let isPremium = await MainActor.run { IAPManager.shared.premiumStatus.isPremium }
         
         struct AnalyzeRequest: Codable {
             let image_base64: String
             let media_type: String
             let user_context: String?
             let language: String?
-            let is_premium: Bool?  // B-027: 優先佇列標記
+            let is_premium: Bool?
         }
         
-        let userLanguage = SettingsManager.shared.appLanguage.rawValue
+        let httpBody: Data = try await Task.detached(priority: .userInitiated) {
+            let b64Start = CFAbsoluteTimeGetCurrent()
+            let base64Image = capturedImageData.base64EncodedString()
+            print("[AIService] 🔍 BG Base64 encode: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - b64Start) * 1000))ms, \(capturedImageData.count / 1024)KB → \(base64Image.count / 1024)KB")
+            
+            let jsonStart = CFAbsoluteTimeGetCurrent()
+            let analyzeRequest = AnalyzeRequest(
+                image_base64: base64Image,
+                media_type: capturedMediaType.rawValue,
+                user_context: capturedUserContext,
+                language: userLanguage,
+                is_premium: isPremium
+            )
+            let body = try JSONEncoder().encode(analyzeRequest)
+            print("[AIService] 🔍 BG JSON encode: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - jsonStart) * 1000))ms, body: \(body.count / 1024)KB")
+            return body
+        }.value
         
-        let analyzeRequest = AnalyzeRequest(
-            image_base64: base64Image,
-            media_type: mediaType.rawValue,
-            user_context: userContext,
-            language: userLanguage,
-            is_premium: IAPManager.shared.premiumStatus.isPremium
-        )
-        
-        request.httpBody = try JSONEncoder().encode(analyzeRequest)
+        request.httpBody = httpBody
         let prepTime = CFAbsoluteTimeGetCurrent() - prepStart
-        
-        print("[AIService] ⏱️ Prep time: \(String(format: "%.2f", prepTime))s | Image: \(imageData.count / 1024)KB → Base64: \(base64Size)KB")
+        print("[AIService] ⏱️ Prep time (BG): \(String(format: "%.2f", prepTime))s | Image: \(imageData.count / 1024)KB")
         
         // 6. 发送请求（B-020: 自动重试）
         let networkStart = CFAbsoluteTimeGetCurrent()
@@ -1632,6 +1642,7 @@ final class AIService: AIServiceProtocol {
 
 extension AIService {
     /// 从 UIImage 分析媒体（优化版：缩小尺寸 + 压缩质量）
+    /// 图片预处理（resize + JPEG 压缩）在背景线程完成，避免阻塞主线程
     func analyzeImage(
         _ image: UIImage,
         mediaType: MediaType = .photo,
@@ -1639,28 +1650,30 @@ extension AIService {
     ) async throws -> AIAnalysisResult {
         let startTime = CFAbsoluteTimeGetCurrent()
         
-        // 1. 先缩小图片尺寸（Vision API 用 low detail 模式，512px 足够）
-        let maxDimension: CGFloat = 768
-        let resizedImage = resizeImageIfNeeded(image, maxDimension: maxDimension)
-        
-        // 2. 压缩图片（目标 200-400KB，平衡质量和速度）
-        let maxSize = 500 * 1024    // 500KB 上限
-        
-        guard var finalData = resizedImage.jpegData(compressionQuality: 0.6) else {
-            throw AIServiceError.uploadFailed(NSError(domain: "AIService", code: -1, userInfo: [NSLocalizedDescriptionKey: "无法压缩图片"]))
-        }
-        
-        // 如果仍然太大，进一步压缩
-        var quality: CGFloat = 0.6
-        while finalData.count > maxSize && quality > 0.2 {
-            quality -= 0.1
-            if let compressed = resizedImage.jpegData(compressionQuality: quality) {
-                finalData = compressed
+        let finalData: Data = try await Task.detached(priority: .userInitiated) {
+            let resizeStart = CFAbsoluteTimeGetCurrent()
+            let maxDimension: CGFloat = 768
+            let resizedImage = self.resizeImageIfNeeded(image, maxDimension: maxDimension)
+            print("[AIService] 🔍 BG resize: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - resizeStart) * 1000))ms, \(Int(image.size.width))x\(Int(image.size.height)) → \(Int(resizedImage.size.width))x\(Int(resizedImage.size.height))")
+            
+            let compressStart = CFAbsoluteTimeGetCurrent()
+            let maxSize = 500 * 1024
+            guard var data = resizedImage.jpegData(compressionQuality: 0.6) else {
+                throw AIServiceError.uploadFailed(NSError(domain: "AIService", code: -1, userInfo: [NSLocalizedDescriptionKey: "无法压缩图片"]))
             }
-        }
+            var quality: CGFloat = 0.6
+            while data.count > maxSize && quality > 0.2 {
+                quality -= 0.1
+                if let compressed = resizedImage.jpegData(compressionQuality: quality) {
+                    data = compressed
+                }
+            }
+            print("[AIService] 🔍 BG JPEG compress: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - compressStart) * 1000))ms, size: \(data.count / 1024)KB")
+            return data
+        }.value
         
         let prepTime = CFAbsoluteTimeGetCurrent() - startTime
-        print("[AIService] ⏱️ Image prep: \(String(format: "%.2f", prepTime))s | Original: \(Int(image.size.width))x\(Int(image.size.height)) → \(Int(resizedImage.size.width))x\(Int(resizedImage.size.height)) | Size: \(finalData.count / 1024)KB")
+        print("[AIService] ⏱️ Image prep (BG): \(String(format: "%.2f", prepTime))s | Size: \(finalData.count / 1024)KB")
         
         return try await analyzeMedia(
             imageData: finalData,

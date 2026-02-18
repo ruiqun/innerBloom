@@ -573,21 +573,15 @@ struct ContentView: View {
     private func handleMediaSelection(_ item: PhotosPickerItem?) {
         guard let item = item else { return }
         
+        // 立即清除 PhotosPicker 引用，让系统尽早释放 PHPicker session
+        // 减少延迟回扫相簿导致的主线程阻塞
+        selectedPhotoItem = nil
+        
         Task {
-            do {
-                // 判断媒体类型
-                if item.supportedContentTypes.contains(where: { $0.conforms(to: .movie) || $0.conforms(to: .video) }) {
-                    // 视频处理
-                    await handleVideoSelection(item)
-                } else {
-                    // 图片处理
-                    await handleImageSelection(item)
-                }
-            }
-            
-            // 清除选择状态
-            await MainActor.run {
-                selectedPhotoItem = nil
+            if item.supportedContentTypes.contains(where: { $0.conforms(to: .movie) || $0.conforms(to: .video) }) {
+                await handleVideoSelection(item)
+            } else {
+                await handleImageSelection(item)
             }
         }
     }
@@ -595,19 +589,52 @@ struct ContentView: View {
     /// 处理图片选择
     /// B-017: 支持多语言错误提示
     private func handleImageSelection(_ item: PhotosPickerItem) async {
+        let totalStart = CFAbsoluteTimeGetCurrent()
+        print("[ContentView] 🔍 handleImageSelection START")
+        
         do {
-            // 加载图片数据
-            guard let data = try await item.loadTransferable(type: Data.self),
-                  let image = UIImage(data: data) else {
+            let loadStart = CFAbsoluteTimeGetCurrent()
+            guard let data = try await item.loadTransferable(type: Data.self) else {
+                await MainActor.run { showError(String.localized(.cannotReadPhoto)) }
+                return
+            }
+            print("[ContentView] 🔍 PhotosPicker loadTransferable: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - loadStart) * 1000))ms, dataSize: \(data.count / 1024)KB")
+            
+            let decodeStart = CFAbsoluteTimeGetCurrent()
+            let image: UIImage? = await Task.detached(priority: .userInitiated) {
+                let decodeInnerStart = CFAbsoluteTimeGetCurrent()
+                guard let fullImage = UIImage(data: data) else { return nil as UIImage? }
+                print("[ContentView] 🔍 UIImage(data:) decode: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - decodeInnerStart) * 1000))ms, size: \(fullImage.size)")
+                
+                let maxDimension: CGFloat = 1200
+                let size = fullImage.size
+                if max(size.width, size.height) <= maxDimension {
+                    print("[ContentView] 🔍 No pre-scale needed (within \(maxDimension)pt)")
+                    return fullImage
+                }
+                let scaleStart = CFAbsoluteTimeGetCurrent()
+                let scale = maxDimension / max(size.width, size.height)
+                let newSize = CGSize(width: size.width * scale, height: size.height * scale)
+                let renderer = UIGraphicsImageRenderer(size: newSize)
+                let scaled = renderer.image { _ in fullImage.draw(in: CGRect(origin: .zero, size: newSize)) }
+                print("[ContentView] 🔍 Pre-scale \(size) → \(newSize): \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - scaleStart) * 1000))ms")
+                return scaled
+            }.value
+            print("[ContentView] 🔍 Decode+Scale total: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - decodeStart) * 1000))ms")
+            
+            guard let image else {
                 await MainActor.run { showError(String.localized(.cannotReadPhoto)) }
                 return
             }
             
+            let setMediaStart = CFAbsoluteTimeGetCurrent()
             await MainActor.run {
+                print("[ContentView] 🔍 About to call setSelectedMedia on MainActor")
                 viewModel.setSelectedMedia(image: image)
             }
+            print("[ContentView] 🔍 setSelectedMedia returned: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - setMediaStart) * 1000))ms")
             
-            print("[ContentView] Image selected successfully")
+            print("[ContentView] ✅ handleImageSelection TOTAL: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - totalStart) * 1000))ms")
             
         } catch {
             await MainActor.run { showError(String.localized(.photoReadFailed) + error.localizedDescription) }

@@ -35,10 +35,10 @@ enum AppearanceMode: String, Codable, CaseIterable {
 /// 原 AIToneStyle，改為「陪伴角色」呈現（不出現 AI 字樣）
 /// F-025: 阿暖、阿衡、阿樂、阿澄
 enum AIToneStyle: String, Codable, CaseIterable {
+    case empathetic = "empathetic" // 阿澄｜懂你的人（預設，免費可用，排第一）
     case warm = "warm"           // 阿暖｜貼心好友
     case minimal = "minimal"     // 阿衡｜理性同事
     case humorous = "humorous"   // 阿樂｜幽默搭子
-    case empathetic = "empathetic" // 阿澄｜懂你的人（預設）
     
     /// B-017: 本地化显示名称
     var displayName: String {

@@ -122,29 +122,38 @@ final class LocalMediaManager {
     ///   - diaryId: 日记 ID（用于文件命名）
     /// - Returns: 保存结果
     func saveImage(_ image: UIImage, for diaryId: UUID) async throws -> MediaSaveResult {
-        print("[LocalMediaManager] Saving image for diary: \(diaryId)")
+        let totalStart = CFAbsoluteTimeGetCurrent()
+        print("[LocalMediaManager] 🔍 saveImage START — diaryId: \(diaryId), imageSize: \(image.size)")
         
-        // 1. 压缩图片
-        guard let imageData = image.jpegData(compressionQuality: imageCompressionQuality) else {
-            throw MediaManagerError.invalidMediaData
-        }
-        
-        // 2. 生成文件名
+        let quality = imageCompressionQuality
+        let dirName = mediaDirectoryName
+        let dirURL = mediaDirectoryURL
         let fileName = "\(diaryId.uuidString).jpg"
-        let relativePath = "\(mediaDirectoryName)/\(fileName)"
-        let fileURL = mediaDirectoryURL.appendingPathComponent(fileName)
+        let relativePath = "\(dirName)/\(fileName)"
+        let fileURL = dirURL.appendingPathComponent(fileName)
         
-        // 3. 保存图片
-        do {
-            try imageData.write(to: fileURL)
-            print("[LocalMediaManager] Image saved: \(fileURL.path)")
-        } catch {
-            print("[LocalMediaManager] Failed to save image: \(error)")
-            throw MediaManagerError.failedToSaveMedia
-        }
+        try await Task.detached(priority: .userInitiated) {
+            let compressStart = CFAbsoluteTimeGetCurrent()
+            guard let imageData = image.jpegData(compressionQuality: quality) else {
+                throw MediaManagerError.invalidMediaData
+            }
+            print("[LocalMediaManager] 🔍 JPEG compress: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - compressStart) * 1000))ms, size: \(imageData.count / 1024)KB")
+            
+            do {
+                let writeStart = CFAbsoluteTimeGetCurrent()
+                try imageData.write(to: fileURL)
+                print("[LocalMediaManager] 🔍 File write: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - writeStart) * 1000))ms")
+            } catch {
+                print("[LocalMediaManager] ❌ Failed to save image: \(error)")
+                throw MediaManagerError.failedToSaveMedia
+            }
+        }.value
         
-        // 4. 生成缩略图
+        let thumbStart = CFAbsoluteTimeGetCurrent()
         let thumbnailPath = try await generateThumbnail(from: image, for: diaryId)
+        print("[LocalMediaManager] 🔍 Thumbnail generation: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - thumbStart) * 1000))ms")
+        
+        print("[LocalMediaManager] ✅ saveImage TOTAL: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - totalStart) * 1000))ms")
         
         return MediaSaveResult(
             localPath: relativePath,
@@ -229,32 +238,33 @@ final class LocalMediaManager {
     
     /// 生成图片缩略图
     private func generateThumbnail(from image: UIImage, for diaryId: UUID) async throws -> String {
-        // 计算缩略图尺寸（保持比例）
-        let scale = min(thumbnailSize.width / image.size.width, thumbnailSize.height / image.size.height)
-        let newSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-        
-        // 生成缩略图
-        let renderer = UIGraphicsImageRenderer(size: newSize)
-        let thumbnail = renderer.image { _ in
-            image.draw(in: CGRect(origin: .zero, size: newSize))
-        }
-        
-        // 保存缩略图
-        guard let thumbnailData = thumbnail.jpegData(compressionQuality: 0.7) else {
-            throw MediaManagerError.failedToGenerateThumbnail
-        }
-        
+        let thumbSize = thumbnailSize
+        let thumbDirName = thumbnailDirectoryName
+        let thumbDirURL = thumbnailDirectoryURL
         let fileName = "\(diaryId.uuidString)_thumb.jpg"
-        let relativePath = "\(thumbnailDirectoryName)/\(fileName)"
-        let fileURL = thumbnailDirectoryURL.appendingPathComponent(fileName)
+        let relativePath = "\(thumbDirName)/\(fileName)"
+        let fileURL = thumbDirURL.appendingPathComponent(fileName)
         
-        do {
-            try thumbnailData.write(to: fileURL)
-            print("[LocalMediaManager] Thumbnail saved: \(fileURL.path)")
-            return relativePath
-        } catch {
-            throw MediaManagerError.failedToGenerateThumbnail
-        }
+        // 縮圖生成 + 壓縮 + 寫檔全部在背景執行緒
+        try await Task.detached(priority: .utility) {
+            let scale = min(thumbSize.width / image.size.width, thumbSize.height / image.size.height)
+            let newSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+            let renderer = UIGraphicsImageRenderer(size: newSize)
+            let thumbnail = renderer.image { _ in
+                image.draw(in: CGRect(origin: .zero, size: newSize))
+            }
+            guard let thumbnailData = thumbnail.jpegData(compressionQuality: 0.7) else {
+                throw MediaManagerError.failedToGenerateThumbnail
+            }
+            do {
+                try thumbnailData.write(to: fileURL)
+                print("[LocalMediaManager] Thumbnail saved: \(fileURL.path)")
+            } catch {
+                throw MediaManagerError.failedToGenerateThumbnail
+            }
+        }.value
+        
+        return relativePath
     }
     
     /// 生成视频缩略图

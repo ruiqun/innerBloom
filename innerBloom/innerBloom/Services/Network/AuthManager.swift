@@ -174,13 +174,40 @@ final class AuthManager {
         self.decoder = JSONDecoder()
         self.encoder = JSONEncoder()
         
-        // 尝试从本机恢复 Session
-        restoreSession()
+        // Session 恢復改為非同步（由 restoreSessionAsync 觸發），
+        // 讓 authState 先保持 .unknown → Splash 立即顯示
     }
     
     // MARK: - Session Management
     
-    /// 恢复已保存的 Session（App 启动时调用）
+    /// 非同步恢復 Session（Splash 期間呼叫，含 token refresh 等待）
+    func restoreSessionAsync() async {
+        guard let data = UserDefaults.standard.data(forKey: sessionStorageKey) else {
+            print("[AuthManager] No saved session found")
+            await MainActor.run { authState = .unauthenticated }
+            return
+        }
+        
+        do {
+            let savedSession = try JSONDecoder().decode(AuthSession.self, from: data)
+            
+            if savedSession.isExpired {
+                print("[AuthManager] Saved session expired, attempting refresh...")
+                await refreshTokenIfNeeded(refreshToken: savedSession.refreshToken)
+            } else {
+                await MainActor.run {
+                    currentSession = savedSession
+                    authState = .authenticated
+                }
+                print("[AuthManager] Session restored for: \(savedSession.userEmail ?? "unknown")")
+            }
+        } catch {
+            print("[AuthManager] Failed to decode saved session: \(error)")
+            await MainActor.run { clearSession() }
+        }
+    }
+    
+    /// 同步恢復 Session（向前相容，內部使用場景）
     func restoreSession() {
         guard let data = UserDefaults.standard.data(forKey: sessionStorageKey) else {
             print("[AuthManager] No saved session found")
@@ -192,13 +219,11 @@ final class AuthManager {
             let savedSession = try JSONDecoder().decode(AuthSession.self, from: data)
             
             if savedSession.isExpired {
-                // Token 已过期，尝试刷新
                 print("[AuthManager] Saved session expired, attempting refresh...")
                 Task {
                     await refreshTokenIfNeeded(refreshToken: savedSession.refreshToken)
                 }
             } else {
-                // Session 有效
                 currentSession = savedSession
                 authState = .authenticated
                 print("[AuthManager] Session restored for: \(savedSession.userEmail ?? "unknown")")

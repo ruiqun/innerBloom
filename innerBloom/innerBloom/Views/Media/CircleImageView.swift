@@ -95,27 +95,32 @@ struct CircleImageView: View {
         }
         .aspectRatio(1, contentMode: .fit)
         .onChange(of: image) { _, newImage in
+            print("[CircleImageView] 🔍 .onChange(of: image) fired — hasImage: \(newImage != nil)")
             updateParticles(newImage)
         }
         .onAppear {
+            print("[CircleImageView] 🔍 .onAppear — hasImage: \(image != nil)")
             updateParticles(image)
         }
     }
     
-    /// 当图片变化时更新粒子网格
+    /// 当图片变化时更新粒子网格（背景執行緒運算，主執行緒掛載節點）
     private func updateParticles(_ uiImage: UIImage?) {
-        guard let uiImage = uiImage else { return }
+        guard let uiImage = uiImage else {
+            print("[CircleImageView] 🔍 updateParticles: image is nil, skip")
+            return
+        }
         
-        // 避免重复生成
         let imageId = "\(uiImage.size.width)x\(uiImage.size.height)_\(uiImage.hash)"
-        guard imageId != lastImageId else { return }
+        guard imageId != lastImageId else {
+            print("[CircleImageView] 🔍 updateParticles: same imageId, skip (\(imageId))")
+            return
+        }
         lastImageId = imageId
         
-        // 在后台线程生成网格，避免卡顿
+        print("[CircleImageView] 🔍 updateParticles: dispatching createMeshInBackground — imageSize: \(uiImage.size), thread: \(Thread.isMainThread ? "Main" : "BG")")
         DispatchQueue.global(qos: .userInitiated).async {
-            DispatchQueue.main.async {
-                particleManager.createMesh(from: uiImage)
-            }
+            particleManager.createMeshInBackground(from: uiImage)
         }
     }
 }

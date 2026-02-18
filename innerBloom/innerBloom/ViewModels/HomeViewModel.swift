@@ -228,13 +228,7 @@ final class HomeViewModel {
     // MARK: - 初始化
     
     private init() {
-        print("[HomeViewModel] Initialized")
-        // 初始加载标签
-        loadTags()
-        // 加载日记列表
-        loadDiariesForCurrentTag()
-        // 加载未完成的草稿（如有）
-        loadPendingDrafts()
+        print("[HomeViewModel] Initialized (lazy — data loading deferred to reloadAfterLogin)")
     }
     
     // MARK: - 标签操作 (B-005)
@@ -1337,12 +1331,15 @@ final class HomeViewModel {
     
     /// 设置选中的媒体（图片）
     func setSelectedMedia(image: UIImage) {
-        print("[HomeViewModel] Photo selected")
+        let start = CFAbsoluteTimeGetCurrent()
+        print("[HomeViewModel] 🔍 setSelectedMedia START — image size: \(image.size), scale: \(image.scale)")
         
         currentMediaType = .photo
         selectedMediaImage = image
         selectedVideoData = nil
         chatMessages = []
+        
+        print("[HomeViewModel] 🔍 setSelectedMedia state updated: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - start) * 1000))ms (triggers SwiftUI re-render)")
         
         // 异步保存媒体并创建草稿
         Task {
@@ -1365,25 +1362,25 @@ final class HomeViewModel {
         }
     }
     
-    /// 保存媒体并创建草稿
-    @MainActor
+    /// 保存媒体并创建草稿（IO 密集工作在背景執行，UI 更新回主執行緒）
     private func saveMediaAndCreateDraft(image: UIImage, videoData: Data?, mediaType: MediaType) async {
-        isSavingMedia = true
+        let totalStart = CFAbsoluteTimeGetCurrent()
+        print("[HomeViewModel] 🔍 saveMediaAndCreateDraft START — mediaType: \(mediaType)")
         
-        // 1. 创建新草稿 ID
+        await MainActor.run { isSavingMedia = true }
+        
         let draftId = UUID()
         
         do {
-            // 2. 保存媒体到本机
+            let saveStart = CFAbsoluteTimeGetCurrent()
             let saveResult: MediaSaveResult
-            
             if mediaType == .video, let data = videoData {
                 saveResult = try await mediaManager.saveVideo(data, for: draftId)
             } else {
                 saveResult = try await mediaManager.saveImage(image, for: draftId)
             }
+            print("[HomeViewModel] 🔍 mediaManager.save: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - saveStart) * 1000))ms")
             
-            // 3. 创建草稿对象
             let draft = DiaryEntry(
                 id: draftId,
                 mediaType: saveResult.mediaType,
@@ -1391,22 +1388,28 @@ final class HomeViewModel {
                 thumbnailPath: saveResult.thumbnailPath
             )
             
-            // 4. 保存草稿到本机
-            try draftManager.saveDraft(draft)
+            let draftSaveStart = CFAbsoluteTimeGetCurrent()
+            try await Task.detached(priority: .utility) { [draftManager] in
+                try draftManager.saveDraft(draft)
+            }.value
+            print("[HomeViewModel] 🔍 draftManager.saveDraft: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - draftSaveStart) * 1000))ms")
             
-            // 5. 更新状态
-            currentDraft = draft
-            isSavingMedia = false
+            await MainActor.run {
+                let uiStart = CFAbsoluteTimeGetCurrent()
+                self.currentDraft = draft
+                self.isSavingMedia = false
+                print("[HomeViewModel] 🔍 UI state update + triggerInitialAIResponse about to fire: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - uiStart) * 1000))ms")
+                self.triggerInitialAIResponse(for: mediaType)
+            }
             
-            print("[HomeViewModel] Media saved and draft created: \(draftId)")
-            
-            // 6. 触发 AI 欢迎消息 (B-007)
-            triggerInitialAIResponse(for: mediaType)
+            print("[HomeViewModel] ✅ saveMediaAndCreateDraft TOTAL: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - totalStart) * 1000))ms")
             
         } catch {
-            isSavingMedia = false
-            showErrorMessage(error.localizedDescription)
-            print("[HomeViewModel] Failed to save media: \(error)")
+            await MainActor.run {
+                self.isSavingMedia = false
+                self.showErrorMessage(error.localizedDescription)
+            }
+            print("[HomeViewModel] ❌ Failed to save media: \(error)")
         }
     }
     
@@ -1679,10 +1682,10 @@ final class HomeViewModel {
         
         // 标记后台分析中（不显示 typing 动画）
         isAnalyzing = true
-        analysisProgressText = ""  // 不显示进度，静默进行
+        analysisProgressText = ""
         
-        Task { @MainActor in
-            await performBackgroundAnalysis(image: image, mediaType: mediaType)
+        Task.detached(priority: .userInitiated) { [weak self] in
+            await self?.performBackgroundAnalysis(image: image, mediaType: mediaType)
         }
     }
     
@@ -1739,37 +1742,34 @@ final class HomeViewModel {
     }
     
     /// 后台静默分析（不阻塞用户交互）(B-008)
-    @MainActor
+    /// AI 图片预处理 + 网络请求在背景线程执行，仅状态更新回主线程
     private func performBackgroundAnalysis(image: UIImage, mediaType: MediaType) async {
         print("[HomeViewModel] 🔄 Starting background analysis...")
         let startTime = CFAbsoluteTimeGetCurrent()
         
         do {
-            // 调用 AI 服务分析媒体
             let analysis = try await aiService.analyzeImage(
                 image,
                 mediaType: mediaType,
-                userContext: nil  // 后台分析不需要用户上下文
+                userContext: nil
             )
             
             let elapsed = CFAbsoluteTimeGetCurrent() - startTime
             print("[HomeViewModel] ✅ Background analysis done in \(String(format: "%.1f", elapsed))s")
             
-            // 保存分析结果（用于后续对话）
-            currentAnalysis = analysis
-            
-            // 更新草稿的分析结果 (D-004)
-            if var draft = currentDraft {
-                draft.aiAnalysisResult = analysis.description
-                draft.isAnalyzed = true
-                draft.touch()
-                currentDraft = draft
+            await MainActor.run {
+                currentAnalysis = analysis
                 
-                // 静默保存到本机
-                try? draftManager.saveDraft(draft)
+                if var draft = currentDraft {
+                    draft.aiAnalysisResult = analysis.description
+                    draft.isAnalyzed = true
+                    draft.touch()
+                    currentDraft = draft
+                    try? draftManager.saveDraft(draft)
+                }
+                
+                isAnalyzing = false
             }
-            
-            isAnalyzing = false
             print("[HomeViewModel] 📝 Analysis saved:")
             print("   描述: \(analysis.description)")
             print("   标签: \(analysis.sceneTags?.joined(separator: ", ") ?? "无")")
@@ -1777,14 +1777,13 @@ final class HomeViewModel {
             print("   有人物: \(analysis.hasPeople == true ? "是" : "否")")
             
         } catch {
-            // 分析失败，静默处理（不打扰用户）
             print("[HomeViewModel] ⚠️ Background analysis failed: \(error)")
-            isAnalyzing = false
-            
-            // 记录错误但不显示给用户
-            if var draft = currentDraft {
-                draft.lastErrorMessage = "AI 分析失败：\(error.localizedDescription)"
-                currentDraft = draft
+            await MainActor.run {
+                isAnalyzing = false
+                if var draft = currentDraft {
+                    draft.lastErrorMessage = "AI 分析失败：\(error.localizedDescription)"
+                    currentDraft = draft
+                }
             }
         }
     }
@@ -1989,10 +1988,27 @@ final class HomeViewModel {
         print("[HomeViewModel] ✅ All data reset for logout")
     }
     
-    /// 登入后重新加载数据
+    /// Splash 期間並行預載資料（async，可 await 完成）
+    @MainActor
+    func preloadData() async {
+        print("[HomeViewModel] 📦 Preloading data during splash...")
+        availableTags = [Tag.all]
+        selectedTag = Tag.all
+        isLoading = true
+        
+        async let tagsTask: () = loadTagsFromCloud()
+        async let diariesTask: () = loadDiariesFromCloud()
+        _ = await (tagsTask, diariesTask)
+        
+        loadPendingDrafts()
+        print("[HomeViewModel] 📦 Preload complete — \(diaryEntries.count) diaries, \(availableTags.count) tags")
+    }
+    
+    /// 手動登入成功後重新載入（非 Splash 路徑）
     func reloadAfterLogin() {
         print("[HomeViewModel] 🔄 Reloading data after login...")
         loadTags()
         loadDiariesForCurrentTag()
+        loadPendingDrafts()
     }
 }

@@ -4,8 +4,10 @@
 //
 //  Created by Jeff Zheng on 2026/1/31.
 //
-//  B-010: App 启动时自动触发环境刷新（定位+天气）
-//  B-018: App 启动时判断登入状态，未登入显示 LoginView
+//  啟動流程：
+//  Splash → 恢復 Session → 已登入則並行預載資料 → 至少 1.2 秒 → 跳轉
+//  未登入：Splash 1.2 秒後直接進登入頁
+//  手動登入成功：onChange 偵測 → reloadAfterLogin()
 //
 
 import SwiftUI
@@ -13,63 +15,104 @@ import SwiftUI
 @main
 struct innerBloomApp: App {
     
-    /// 环境服务（App 级别单例）
     private let environmentService = EnvironmentService.shared
     
-    /// 认证管理器 (B-018)
     @Bindable private var authManager = AuthManager.shared
-    
-    /// 设置管理器（用于全局外观模式）
     @Bindable private var settingsManager = SettingsManager.shared
     
-    /// 场景阶段监听
     @Environment(\.scenePhase) private var scenePhase
+    
+    /// Splash 是否完成（Session 恢復 + 資料預載 + 最少 1.2 秒）
+    @State private var isSplashDone = false
+    
+    /// 記錄上次 authState，用於偵測「手動登入成功」
+    @State private var previousAuthState: AuthState = .unknown
     
     var body: some Scene {
         WindowGroup {
-            // B-018: 根据登入状态显示不同页面
             Group {
-                switch authManager.authState {
-                case .unknown:
-                    // 启动中，显示 splash
+                if !isSplashDone {
                     splashView
-                    
-                case .unauthenticated:
-                    // 未登入，显示登入页 (S-004)
-                    LoginView()
-                        .transition(.opacity)
-                    
-                case .authenticated:
-                    // 已登入，显示主页 (S-001)
-                    ContentView()
-                        .transition(.opacity)
+                } else {
+                    switch authManager.authState {
+                    case .unknown, .unauthenticated:
+                        LoginView()
+                            .transition(.opacity)
+                    case .authenticated:
+                        ContentView()
+                            .transition(.opacity)
+                    }
                 }
             }
+            .animation(.easeInOut(duration: 0.3), value: isSplashDone)
             .animation(.easeInOut(duration: 0.3), value: authManager.authState)
             .preferredColorScheme(settingsManager.colorScheme)
-            .onChange(of: authManager.authState) { _, newState in
-                // B-018: 登入成功後從雲端重新載入回憶（修復登出再登入後回憶消失問題）
-                if newState == .authenticated {
+            .onChange(of: authManager.authState) { oldState, newState in
+                // 偵測「手動登入成功」：從登入頁 unauthenticated → authenticated
+                if oldState == .unauthenticated && newState == .authenticated && isSplashDone {
+                    print("[App] 🔑 Manual login detected, reloading data...")
                     HomeViewModel.shared.reloadAfterLogin()
+                    environmentService.onAppBecomeActive()
+                    IAPManager.shared.loadCachedStatus()
+                    Task { await IAPManager.shared.syncPremiumStatus() }
                 }
             }
             .onChange(of: scenePhase) { oldPhase, newPhase in
                 handleScenePhaseChange(from: oldPhase, to: newPhase)
             }
             .onAppear {
-                // 首次啟動時同步語言，確保預設為繁體中文
                 LocalizationManager.shared.syncFromSettings()
-                // App 首次启动
                 print("[App] 🚀 innerBloom launched")
-                environmentService.onAppBecomeActive()
-                // B-024: 啟動時載入快取並同步 Premium 狀態
-                IAPManager.shared.loadCachedStatus()
-                Task { await IAPManager.shared.syncPremiumStatus() }
+            }
+            .task {
+                await performSplashSequence()
             }
         }
     }
     
-    /// 启动画面（认证状态未确定时显示）
+    // MARK: - Splash 啟動流程
+    
+    /// Splash 期間完整初始化：Session 恢復 → 並行預載 → 最少 1.2 秒
+    private func performSplashSequence() async {
+        let splashStart = CFAbsoluteTimeGetCurrent()
+        let minimumSplashDuration: Double = 1.2
+        
+        // 1. 恢復 Session（含 token refresh）
+        await authManager.restoreSessionAsync()
+        
+        // 2. 若已登入 → 並行預載資料（Splash 期間完成，進入主頁即有資料）
+        if authManager.authState == .authenticated {
+            print("[App] ✅ Session valid, preloading data during splash...")
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    await HomeViewModel.shared.preloadData()
+                }
+                group.addTask {
+                    EnvironmentService.shared.onAppBecomeActive()
+                }
+                group.addTask {
+                    IAPManager.shared.loadCachedStatus()
+                    await IAPManager.shared.syncPremiumStatus()
+                }
+            }
+        }
+        
+        // 3. 確保 Splash 至少顯示 minimumSplashDuration
+        let elapsed = CFAbsoluteTimeGetCurrent() - splashStart
+        let remaining = minimumSplashDuration - elapsed
+        if remaining > 0 {
+            try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+        }
+        
+        // 4. 結束 Splash → 跳轉
+        await MainActor.run {
+            isSplashDone = true
+            print("[App] 🏁 Splash done (\(String(format: "%.1f", CFAbsoluteTimeGetCurrent() - splashStart))s)")
+        }
+    }
+    
+    // MARK: - Splash View
+    
     private var splashView: some View {
         ZStack {
             Theme.background
@@ -94,24 +137,20 @@ struct innerBloomApp: App {
         }
     }
     
-    /// 处理场景阶段变化
+    // MARK: - Scene Phase
+    
     private func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
         switch newPhase {
         case .active:
-            // App 进入前台
             if oldPhase != .active {
                 print("[App] 📱 App became active (from \(oldPhase))")
                 environmentService.onAppBecomeActive()
-                // B-024: 回到前台時同步 Premium 狀態
                 Task { await IAPManager.shared.syncPremiumStatus() }
             }
-            
         case .inactive:
             print("[App] 📱 App became inactive")
-            
         case .background:
             print("[App] 📱 App entered background")
-            
         @unknown default:
             break
         }

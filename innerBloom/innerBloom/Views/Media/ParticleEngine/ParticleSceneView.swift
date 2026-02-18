@@ -18,9 +18,12 @@ struct ParticleSceneView: UIViewRepresentable {
     }
     
     func makeUIView(context: Context) -> SCNView {
+        let start = CFAbsoluteTimeGetCurrent()
+        print("[ParticleSceneView] 🔍 makeUIView START — thread: \(Thread.isMainThread ? "Main" : "BG")")
+        
         let scnView = SCNView()
         scnView.scene = particleManager.scene
-        scnView.allowsCameraControl = false  // 使用自定义手势
+        scnView.allowsCameraControl = false
         scnView.autoenablesDefaultLighting = true
         scnView.backgroundColor = ParticleManager.sceneBackgroundColor
         scnView.antialiasingMode = .multisampling4X
@@ -44,7 +47,9 @@ struct ParticleSceneView: UIViewRepresentable {
         panGesture.delegate = context.coordinator
         
         context.coordinator.scnView = scnView
+        particleManager.scnView = scnView
         
+        print("[ParticleSceneView] ✅ makeUIView DONE: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - start) * 1000))ms")
         return scnView
     }
     

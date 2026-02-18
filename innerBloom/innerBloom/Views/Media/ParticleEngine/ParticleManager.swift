@@ -15,6 +15,9 @@ class ParticleManager: ObservableObject {
     var scene: SCNScene
     var geometryNode: SCNNode?
     
+    /// SCNView 弱引用，用于 prepare() 预编译 Shader
+    weak var scnView: SCNView?
+    
     // 网格密度
     @Published var gridN: Int = 200
     @Published var gridM: Int = 200
@@ -110,36 +113,40 @@ class ParticleManager: ObservableObject {
         }
     }
     
+    /// 原始入口（保留向前相容，內部已改為背景執行）
     func createMesh(from image: UIImage) {
-        // 归一化图片方向，确保 cgImage 像素数据与 size 方向一致
-        // iPhone 拍摄的 HEIC/JPEG 带 EXIF 方向标记，cgImage 原始数据不旋转
-        let normalizedImage = image.normalizedOrientation()
-        self.currentImage = normalizedImage
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            self?.createMeshInBackground(from: image)
+        }
+    }
+
+    /// 在背景執行緒完成所有 CPU 密集運算，僅在最後回主執行緒掛載節點
+    func createMeshInBackground(from image: UIImage) {
+        let totalStart = CFAbsoluteTimeGetCurrent()
+        print("[ParticleManager] 🔍 createMeshInBackground START — thread: \(Thread.isMainThread ? "⚠️ Main" : "BG"), imageSize: \(image.size)")
         
-        geometryNode?.removeFromParentNode()
+        let normalizeStart = CFAbsoluteTimeGetCurrent()
+        let normalizedImage = image.normalizedOrientation()
+        print("[ParticleManager] 🔍 normalizedOrientation: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - normalizeStart) * 1000))ms, result: \(normalizedImage.size)")
         
         let width = Float(normalizedImage.size.width)
         let height = Float(normalizedImage.size.height)
         let aspect = width / height
         
-        // 统一圆形尺寸：无论横竖图，短边始终为 targetSize
-        // 保证 min(worldWidth, worldHeight) = targetSize → baseRadius 恒定
         let targetSize: Float = 10.0
         let worldWidth: Float
         let worldHeight: Float
         if aspect >= 1.0 {
-            // 横向图：高度为短边
             worldHeight = targetSize
             worldWidth = worldHeight * aspect
         } else {
-            // 纵向图：宽度为短边
             worldWidth = targetSize
             worldHeight = worldWidth / aspect
         }
         
-        let cols = gridN
-        let rows = Int(Float(gridN) / aspect)
-        gridM = rows
+        let cols = self.gridN
+        let rows = Int(Float(cols) / aspect)
+        print("[ParticleManager] 🔍 Grid: \(cols) x \(rows) = \(cols * rows) cells")
         
         let cellSizeX = worldWidth / Float(cols)
         let cellSizeY = worldHeight / Float(rows)
@@ -157,41 +164,38 @@ class ParticleManager: ObservableObject {
         var particleColors: [SCNVector3] = []
         
         let startX = -worldWidth / 2.0
-        
         let baseRadius = min(worldWidth, worldHeight) / 2.0 * 0.95
-        
         var index: Int32 = 0
         
+        let pixelDataStart = CFAbsoluteTimeGetCurrent()
         let pixelData = normalizedImage.cgImage?.dataProvider?.data
         let data: UnsafePointer<UInt8>? = CFDataGetBytePtr(pixelData)
         let bytesPerPixel = 4
         let bytesPerRow = normalizedImage.cgImage?.bytesPerRow ?? 0
+        let pDensity = self.particleDensity
+        print("[ParticleManager] 🔍 Pixel data access: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - pixelDataStart) * 1000))ms, bytesPerRow: \(bytesPerRow)")
         
+        let loopStart = CFAbsoluteTimeGetCurrent()
         for r in 0..<rows {
             for c in 0..<cols {
                 let cx = startX + (Float(c) + 0.5) * cellSizeX
                 let yPos = (worldHeight / 2.0) - (Float(r) + 0.5) * cellSizeY
                 
                 let dist = sqrt(cx*cx + yPos*yPos)
-                
                 let angle = atan2(yPos, cx)
                 let noise = (sin(angle * 10.0) + cos(angle * 23.0)) * 0.05 * baseRadius
                 let randomNoise = Float.random(in: -0.1...0.1) * baseRadius
                 
                 if dist > (baseRadius + Float(noise) + randomNoise) {
-                    let count = Int(particleDensity)
-                    let remainder = particleDensity - Float(count)
-                    
+                    let count = Int(pDensity)
+                    let remainder = pDensity - Float(count)
                     var attempts = count
-                    if Float.random(in: 0...1) < remainder {
-                        attempts += 1
-                    }
+                    if Float.random(in: 0...1) < remainder { attempts += 1 }
                     
                     for _ in 0..<attempts {
                         if Float.random(in: 0...1) > 0.2, let data = data {
                             let u1 = CGFloat(c) / CGFloat(cols)
                             let vRow_top = CGFloat(r) / CGFloat(rows)
-                            
                             let ix = Int(u1 * CGFloat(normalizedImage.size.width))
                             let iy = Int(vRow_top * CGFloat(normalizedImage.size.height))
                             
@@ -200,10 +204,8 @@ class ParticleManager: ObservableObject {
                                 let red = Float(data[pixelIndex]) / 255.0
                                 let green = Float(data[pixelIndex + 1]) / 255.0
                                 let blue = Float(data[pixelIndex + 2]) / 255.0
-                                
                                 let jitterX = Float.random(in: -cellSizeX*0.5...cellSizeX*0.5)
                                 let jitterY = Float.random(in: -cellSizeY*0.5...cellSizeY*0.5)
-                                
                                 particleVertices.append(SCNVector3(cx + jitterX, yPos + jitterY, 0))
                                 particleColors.append(SCNVector3(red, green, blue))
                             }
@@ -216,7 +218,6 @@ class ParticleManager: ObservableObject {
                 let v2 = SCNVector3(cx + quadHalfW, yPos + quadHalfH, 0)
                 let v3 = SCNVector3(cx - quadHalfW, yPos - quadHalfH, 0)
                 let v4 = SCNVector3(cx + quadHalfW, yPos - quadHalfH, 0)
-                
                 vertices.append(contentsOf: [v1, v2, v3, v4])
                 
                 let n = SCNVector3(0, 0, 1)
@@ -224,43 +225,41 @@ class ParticleManager: ObservableObject {
                 
                 let u1 = CGFloat(c) / CGFloat(cols)
                 let u2 = CGFloat(c+1) / CGFloat(cols)
-                
                 let vRow_top = CGFloat(r) / CGFloat(rows)
                 let vRow_bottom = CGFloat(r+1) / CGFloat(rows)
-                
-                let uv1 = CGPoint(x: u1, y: vRow_top)
-                let uv2 = CGPoint(x: u2, y: vRow_top)
-                let uv3 = CGPoint(x: u1, y: vRow_bottom)
-                let uv4 = CGPoint(x: u2, y: vRow_bottom)
-                
-                uvs.append(contentsOf: [uv1, uv2, uv3, uv4])
+                uvs.append(contentsOf: [
+                    CGPoint(x: u1, y: vRow_top), CGPoint(x: u2, y: vRow_top),
+                    CGPoint(x: u1, y: vRow_bottom), CGPoint(x: u2, y: vRow_bottom)
+                ])
                 
                 indices.append(contentsOf: [index+2, index+1, index, index+2, index+3, index+1])
                 index += 4
             }
         }
         
+        print("[ParticleManager] 🔍 Grid loop: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - loopStart) * 1000))ms — vertices: \(vertices.count), particles: \(particleVertices.count)")
+        
+        let geoStart = CFAbsoluteTimeGetCurrent()
         let srcVertices = SCNGeometrySource(vertices: vertices)
         let srcNormals = SCNGeometrySource(normals: normals)
         let srcUVs = SCNGeometrySource(textureCoordinates: uvs)
-        
         let element = SCNGeometryElement(indices: indices, primitiveType: .triangles)
-        
         let geometry = SCNGeometry(sources: [srcVertices, srcNormals, srcUVs], elements: [element])
         
+        print("[ParticleManager] 🔍 SCNGeometry build: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - geoStart) * 1000))ms")
+        
+        let matStart = CFAbsoluteTimeGetCurrent()
         let material = SCNMaterial()
         material.diffuse.contents = normalizedImage
         material.isDoubleSided = true
         material.lightingModel = .constant
         
-        // 呼吸波动着色器
         let shaderModifier = """
         uniform float amplitude;
         uniform float frequency;
         uniform float speed;
         
         float time = u_time;
-        
         vec2 pos = _geometry.position.xy * 0.5 * frequency;
         vec2 anim = vec2(time * speed * 0.2, time * speed * 0.1);
         vec2 p = pos + anim;
@@ -269,121 +268,87 @@ class ParticleManager: ObservableObject {
         float amp = 1.0;
         float maxVal = 0.0;
         
-        // Octave 1
-        vec2 ip = floor(p);
-        vec2 u = fract(p);
-        u = u*u*(3.0-2.0*u);
+        vec2 ip = floor(p); vec2 u = fract(p); u = u*u*(3.0-2.0*u);
         float n1 = mix(
             mix(fract(sin(dot(ip, vec2(12.9898,78.233))) * 43758.5453),
                 fract(sin(dot(ip+vec2(1.0,0.0), vec2(12.9898,78.233))) * 43758.5453), u.x),
             mix(fract(sin(dot(ip+vec2(0.0,1.0), vec2(12.9898,78.233))) * 43758.5453),
-                fract(sin(dot(ip+vec2(1.0,1.0), vec2(12.9898,78.233))) * 43758.5453), u.x),
-            u.y);
+                fract(sin(dot(ip+vec2(1.0,1.0), vec2(12.9898,78.233))) * 43758.5453), u.x), u.y);
         total += n1 * amp; maxVal += amp; amp *= 0.5; p *= 2.0;
         
-        // Octave 2
         ip = floor(p); u = fract(p); u = u*u*(3.0-2.0*u);
         float n2 = mix(
             mix(fract(sin(dot(ip, vec2(12.9898,78.233))) * 43758.5453),
                 fract(sin(dot(ip+vec2(1.0,0.0), vec2(12.9898,78.233))) * 43758.5453), u.x),
             mix(fract(sin(dot(ip+vec2(0.0,1.0), vec2(12.9898,78.233))) * 43758.5453),
-                fract(sin(dot(ip+vec2(1.0,1.0), vec2(12.9898,78.233))) * 43758.5453), u.x),
-            u.y);
+                fract(sin(dot(ip+vec2(1.0,1.0), vec2(12.9898,78.233))) * 43758.5453), u.x), u.y);
         total += n2 * amp; maxVal += amp; amp *= 0.5; p *= 2.0;
         
-        // Octave 3
         ip = floor(p); u = fract(p); u = u*u*(3.0-2.0*u);
         float n3 = mix(
             mix(fract(sin(dot(ip, vec2(12.9898,78.233))) * 43758.5453),
                 fract(sin(dot(ip+vec2(1.0,0.0), vec2(12.9898,78.233))) * 43758.5453), u.x),
             mix(fract(sin(dot(ip+vec2(0.0,1.0), vec2(12.9898,78.233))) * 43758.5453),
-                fract(sin(dot(ip+vec2(1.0,1.0), vec2(12.9898,78.233))) * 43758.5453), u.x),
-            u.y);
+                fract(sin(dot(ip+vec2(1.0,1.0), vec2(12.9898,78.233))) * 43758.5453), u.x), u.y);
         total += n3 * amp; maxVal += amp;
         
         float finalNoise = total / maxVal;
         float z = (finalNoise - 0.5) * 2.0 * amplitude * 2.0;
-        
         _geometry.position.z += z;
         """
         
-        material.shaderModifiers = [
-            .geometry: shaderModifier
-        ]
-        
-        material.setValue(waveAmplitude, forKey: "amplitude")
-        material.setValue(waveFrequency, forKey: "frequency")
-        material.setValue(waveSpeed, forKey: "speed")
-        
+        material.shaderModifiers = [.geometry: shaderModifier]
+        let amp = self.waveAmplitude
+        let freq = self.waveFrequency
+        let spd = self.waveSpeed
+        let pSize = Float(self.particleSize)
+        material.setValue(amp, forKey: "amplitude")
+        material.setValue(freq, forKey: "frequency")
+        material.setValue(spd, forKey: "speed")
         geometry.materials = [material]
+        print("[ParticleManager] 🔍 Material + Shader setup: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - matStart) * 1000))ms")
         
         let node = SCNNode(geometry: geometry)
-        scene.rootNode.addChildNode(node)
-        self.geometryNode = node
-        
         node.eulerAngles = SCNVector3(0, 0, 0)
         
-        // 粒子系统 (Billboard Quads)
+        let particleBuildStart = CFAbsoluteTimeGetCurrent()
         if !particleVertices.isEmpty {
             var quadVertices: [SCNVector3] = []
             var quadColors: [Data] = []
             var quadUVs: [CGPoint] = []
             var quadIndices: [Int32] = []
-            
             var pIndex: Int32 = 0
             
             for i in 0..<particleVertices.count {
                 let center = particleVertices[i]
                 let color = particleColors[i]
                 
-                quadVertices.append(center)
-                quadVertices.append(center)
-                quadVertices.append(center)
-                quadVertices.append(center)
-                
-                quadUVs.append(CGPoint(x: -1, y: 1))
-                quadUVs.append(CGPoint(x: 1, y: 1))
-                quadUVs.append(CGPoint(x: -1, y: -1))
-                quadUVs.append(CGPoint(x: 1, y: -1))
+                quadVertices.append(contentsOf: [center, center, center, center])
+                quadUVs.append(contentsOf: [
+                    CGPoint(x: -1, y: 1), CGPoint(x: 1, y: 1),
+                    CGPoint(x: -1, y: -1), CGPoint(x: 1, y: -1)
+                ])
                 
                 let r = Float(color.x); let g = Float(color.y); let b = Float(color.z); let a = Float(1.0)
                 let colorBytes = withUnsafeBytes(of: r) { Data($0) } +
                                  withUnsafeBytes(of: g) { Data($0) } +
                                  withUnsafeBytes(of: b) { Data($0) } +
                                  withUnsafeBytes(of: a) { Data($0) }
+                quadColors.append(contentsOf: [colorBytes, colorBytes, colorBytes, colorBytes])
                 
-                quadColors.append(colorBytes)
-                quadColors.append(colorBytes)
-                quadColors.append(colorBytes)
-                quadColors.append(colorBytes)
-                
-                quadIndices.append(pIndex)
-                quadIndices.append(pIndex + 1)
-                quadIndices.append(pIndex + 2)
-                quadIndices.append(pIndex + 1)
-                quadIndices.append(pIndex + 3)
-                quadIndices.append(pIndex + 2)
-                
+                quadIndices.append(contentsOf: [pIndex, pIndex+1, pIndex+2, pIndex+1, pIndex+3, pIndex+2])
                 pIndex += 4
             }
             
             let pSrc = SCNGeometrySource(vertices: quadVertices)
             let pUVSrc = SCNGeometrySource(textureCoordinates: quadUVs)
-            
             var fullColorData = Data()
             for d in quadColors { fullColorData.append(d) }
-            
-            let colorSource = SCNGeometrySource(data: fullColorData,
-                                                semantic: .color,
-                                                vectorCount: quadVertices.count,
-                                                usesFloatComponents: true,
-                                                componentsPerVector: 4,
-                                                bytesPerComponent: 4,
-                                                dataOffset: 0,
-                                                dataStride: 16)
-            
+            let colorSource = SCNGeometrySource(data: fullColorData, semantic: .color,
+                                                vectorCount: quadVertices.count, usesFloatComponents: true,
+                                                componentsPerVector: 4, bytesPerComponent: 4,
+                                                dataOffset: 0, dataStride: 16)
             let pElement = SCNGeometryElement(indices: quadIndices, primitiveType: .triangles)
-            
             let pGeo = SCNGeometry(sources: [pSrc, pUVSrc, colorSource], elements: [pElement])
             
             let pMat = SCNMaterial()
@@ -393,37 +358,66 @@ class ParticleManager: ObservableObject {
             pMat.blendMode = .alpha
             pMat.writesToDepthBuffer = false
             
-            // 粒子飞散动画着色器
             let pShader = """
             uniform float particleSize;
-            
             vec2 corner = _geometry.texcoords[0];
-            
             float time = u_time;
             vec3 dir = normalize(_geometry.position.xyz);
-            
             float random = fract(sin(dot(_geometry.position.xy, vec2(12.9898, 78.233))) * 43758.5453);
-            
             float speed = 0.2 + random * 0.3;
             float maxDist = 8.0;
-            
             float progress = fract(time * speed * 0.5);
-            
             vec3 centerPos = _geometry.position.xyz + dir * progress * maxDist;
-            
             float scale = 0.01 * particleSize;
             vec3 offset = vec3(corner.x * scale, corner.y * scale, 0.0);
-            
             _geometry.position.xyz = centerPos + offset;
-            
             _geometry.color.a *= (1.0 - progress);
             """
             pMat.shaderModifiers = [.geometry: pShader]
-            pMat.setValue(Float(particleSize), forKey: "particleSize")
-            
+            pMat.setValue(pSize, forKey: "particleSize")
             pGeo.materials = [pMat]
             let pNode = SCNNode(geometry: pGeo)
             node.addChildNode(pNode)
+        }
+        print("[ParticleManager] 🔍 Particle billboard build: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - particleBuildStart) * 1000))ms")
+        
+        let bgTotal = CFAbsoluteTimeGetCurrent() - totalStart
+        print("[ParticleManager] 🔍 BG work total: \(String(format: "%.0f", bgTotal * 1000))ms — ready to prepare + mount")
+        
+        if let scnView = self.scnView {
+            // 使用 prepare() 在背景线程预编译 Metal Shader + 上传 GPU Buffer
+            // 完成后再挂载节点，首帧渲染零成本
+            let prepareStart = CFAbsoluteTimeGetCurrent()
+            print("[ParticleManager] 🔍 SCNView.prepare() starting (BG shader compile + GPU upload)...")
+            scnView.prepare([node]) { [weak self] success in
+                let prepareTime = CFAbsoluteTimeGetCurrent() - prepareStart
+                print("[ParticleManager] 🔍 SCNView.prepare() done: \(String(format: "%.0f", prepareTime * 1000))ms, success: \(success)")
+                
+                DispatchQueue.main.async {
+                    let mountStart = CFAbsoluteTimeGetCurrent()
+                    guard let self = self else { return }
+                    self.currentImage = normalizedImage
+                    self.gridM = rows
+                    self.geometryNode?.removeFromParentNode()
+                    self.scene.rootNode.addChildNode(node)
+                    self.geometryNode = node
+                    print("[ParticleManager] 🔍 Main thread node mount (post-prepare): \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - mountStart) * 1000))ms")
+                    print("[ParticleManager] ✅ createMeshInBackground TOTAL: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - totalStart) * 1000))ms")
+                }
+            }
+        } else {
+            print("[ParticleManager] ⚠️ scnView is nil, falling back to direct mount (may cause first-frame stutter)")
+            DispatchQueue.main.async { [weak self] in
+                let mountStart = CFAbsoluteTimeGetCurrent()
+                guard let self = self else { return }
+                self.currentImage = normalizedImage
+                self.gridM = rows
+                self.geometryNode?.removeFromParentNode()
+                self.scene.rootNode.addChildNode(node)
+                self.geometryNode = node
+                print("[ParticleManager] 🔍 Main thread node mount (no prepare): \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - mountStart) * 1000))ms")
+                print("[ParticleManager] ✅ createMeshInBackground TOTAL: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - totalStart) * 1000))ms")
+            }
         }
     }
 }
