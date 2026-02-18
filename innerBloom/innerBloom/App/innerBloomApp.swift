@@ -57,6 +57,8 @@ struct innerBloomApp: App {
                 handleScenePhaseChange(from: oldPhase, to: newPhase)
             }
             .onAppear {
+                // 首次啟動時同步語言，確保預設為繁體中文
+                LocalizationManager.shared.syncFromSettings()
                 // App 首次启动
                 print("[App] 🚀 innerBloom launched")
                 environmentService.onAppBecomeActive()

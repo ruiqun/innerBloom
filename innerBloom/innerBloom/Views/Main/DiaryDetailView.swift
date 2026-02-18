@@ -89,8 +89,8 @@ struct DiaryDetailView: View {
         ZStack(alignment: .bottom) {
             // 媒体内容
             Group {
-                if entry.mediaType == .video, entry.localMediaPath != nil {
-                    // 视频播放器
+                if entry.mediaType == .video, (entry.localMediaPath != nil || entry.cloudMediaURL != nil) {
+                    // 视频播放器（本地或雲端 URL）
                     VideoPlayer(player: player)
                         .overlay(
                             // 播放按钮覆盖
@@ -107,10 +107,35 @@ struct DiaryDetailView: View {
                             }
                         )
                 } else if let image = loadHeaderImage() {
-                    // 图片展示
+                    // 图片展示（本地）
                     Image(uiImage: image)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
+                } else if let urlString = entry.cloudMediaURL ?? entry.cloudThumbnailURL,
+                          let url = URL(string: urlString) {
+                    // 真機／換設備：無本地檔時從雲端 URL 載入
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                        case .failure:
+                            Rectangle()
+                                .fill(Theme.surface)
+                                .overlay(
+                                    Image(systemName: "photo")
+                                        .font(.largeTitle)
+                                        .foregroundColor(Theme.textSecondary)
+                                )
+                        case .empty:
+                            Rectangle()
+                                .fill(Theme.surface)
+                                .overlay(ProgressView().tint(Theme.textSecondary))
+                        @unknown default:
+                            Rectangle().fill(Theme.surface)
+                        }
+                    }
                 } else {
                     // 占位图
                     Rectangle()
@@ -296,13 +321,15 @@ struct DiaryDetailView: View {
         return nil
     }
     
-    /// 设置视频播放器
+    /// 设置视频播放器（支援本地路徑或雲端 URL）
     private func setupVideoPlayer() {
-        guard entry.mediaType == .video,
-              let path = entry.localMediaPath else { return }
-        
-        let url = LocalMediaManager.shared.getDocumentsDirectory().appendingPathComponent(path)
-        player = AVPlayer(url: url)
+        guard entry.mediaType == .video else { return }
+        if let path = entry.localMediaPath {
+            let url = LocalMediaManager.shared.getDocumentsDirectory().appendingPathComponent(path)
+            player = AVPlayer(url: url)
+        } else if let urlString = entry.cloudMediaURL, let url = URL(string: urlString) {
+            player = AVPlayer(url: url)
+        }
     }
     
     /// 切换视频播放状态

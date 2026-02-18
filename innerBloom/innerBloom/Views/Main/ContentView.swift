@@ -49,17 +49,17 @@ struct ContentView: View {
                 .blendMode(.overlay)
                 .ignoresSafeArea()
             
-            // 内容区域（底部不保留安全區域，減少留白）
+            // 内容区域：僅瀏覽模式忽略底部安全區；建立模式保留鍵盤安全區，避免輸入時對話被鍵盤蓋住
             VStack {
                 if viewModel.currentMode == .browsing {
                     browsingModeView
+                        .ignoresSafeArea(edges: .bottom)
                         .transition(.opacity.combined(with: .move(edge: .leading)))
                 } else {
                     creatingModeView
                         .transition(.opacity.combined(with: .move(edge: .trailing)))
                 }
             }
-            .ignoresSafeArea(edges: .bottom)
             
             // 保存中/上传中/生成中遮罩 (B-004, F-005)
             if viewModel.isSavingMedia || viewModel.isUploading || viewModel.isGenerating {

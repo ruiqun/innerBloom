@@ -324,6 +324,28 @@ struct DiaryListItemView: View {
                     .aspectRatio(contentMode: .fill)
                     .frame(width: 56, height: 56)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
+            } else if let urlString = entry.cloudThumbnailURL ?? entry.cloudMediaURL,
+                      let url = URL(string: urlString) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    case .failure, .empty:
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.white.opacity(0.1))
+                            .overlay(
+                                Image(systemName: entry.mediaType == .photo ? "photo" : "video")
+                                    .font(.title3)
+                                    .foregroundColor(Theme.textSecondary)
+                            )
+                    @unknown default:
+                        RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.1))
+                    }
+                }
+                .frame(width: 56, height: 56)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
             } else {
                 RoundedRectangle(cornerRadius: 12)
                     .fill(Color.white.opacity(0.1))
