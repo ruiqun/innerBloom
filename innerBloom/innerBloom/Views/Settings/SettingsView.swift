@@ -9,6 +9,7 @@
 //
 
 import SwiftUI
+import StoreKit
 
 struct SettingsView: View {
     
@@ -18,7 +19,10 @@ struct SettingsView: View {
     @Bindable private var settingsManager = SettingsManager.shared
     @Bindable private var localization = LocalizationManager.shared
     @Bindable private var authManager = AuthManager.shared  // B-018
+    @Bindable private var iapManager = IAPManager.shared    // B-023
     @State private var showLogoutConfirm = false  // B-018
+    @State private var showPremium = false        // B-023
+    @State private var showCompanionRoleSheet = false  // B-029 S-007
     
     // MARK: - Body
     
@@ -33,6 +37,9 @@ struct SettingsView: View {
                     VStack(spacing: 24) {
                         // B-018: 帐号区块
                         accountSection
+                        
+                        // B-023: Premium 入口
+                        premiumSection
                         
                         // B-016: 外观设定暂时隐藏，强制使用深色模式
                         // appearanceSection
@@ -77,6 +84,12 @@ struct SettingsView: View {
         // B-017: 监听语言变化
         .id(localization.languageChangeId)
         // B-018: 登出确认对话框
+        .sheet(isPresented: $showPremium) {
+            PremiumView()
+        }
+        .sheet(isPresented: $showCompanionRoleSheet) {
+            CompanionRoleSheet()
+        }
         .alert(String.localized(.logoutConfirm), isPresented: $showLogoutConfirm) {
             Button(String.localized(.cancel), role: .cancel) { }
             Button(String.localized(.logout), role: .destructive) {
@@ -164,6 +177,52 @@ struct SettingsView: View {
         }
     }
     
+    // MARK: - Premium 區塊 (B-023)
+    
+    private var premiumSection: some View {
+        SettingsSection(title: String.localized(.premium), icon: "crown.fill") {
+            if iapManager.premiumStatus.isPremium {
+                Button(action: { showManageSubscriptions() }) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(String.localized(.premiumAlreadySubscribed))
+                                .font(.system(size: 15))
+                                .foregroundColor(Theme.textPrimary)
+                            if let expiresAt = iapManager.premiumStatus.expiresAt {
+                                Text("\(String.localized(.premiumExpiresOn)): \(formatExpiryDate(expiresAt))")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(Theme.textSecondary)
+                            }
+                            Text(String.localized(.manageSubscription))
+                                .font(.system(size: 13))
+                                .foregroundColor(Theme.accent)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12))
+                            .foregroundColor(Theme.textSecondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+                .buttonStyle(.plain)
+            } else {
+                Button(action: { showPremium = true }) {
+                    HStack {
+                        Text(String.localized(.upgradePremium))
+                            .font(.system(size: 15))
+                            .foregroundColor(Theme.textPrimary)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12))
+                            .foregroundColor(Theme.textSecondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+    
     /// 执行登出 (B-018)
     private func performLogout() {
         Task {
@@ -182,41 +241,34 @@ struct SettingsView: View {
         }
     }
     
-    // MARK: - AI 设定
+    // MARK: - AI 设定（B-029: 陪伴角色）
     
     private var aiSection: some View {
         SettingsSection(title: String.localized(.aiAssistant), icon: "sparkles") {
             VStack(spacing: 16) {
-                // AI 口吻选择
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(String.localized(.aiToneStyle))
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(Theme.textSecondary)
-                    
-                    ForEach(AIToneStyle.allCases, id: \.self) { style in
-                        SettingsOptionRow(
-                            title: style.displayName,
-                            subtitle: style.description,
-                            icon: style.icon,
-                            isSelected: settingsManager.aiToneStyle == style
-                        ) {
-                            settingsManager.setAIToneStyle(style)
+                // B-029: 陪伴角色（S-007 入口）
+                Button(action: { showCompanionRoleSheet = true }) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(String.localized(.companionRole))
+                                .font(.system(size: 15))
+                                .foregroundColor(Theme.textPrimary)
+                            Text("\(settingsManager.aiToneStyle.roleName)｜\(settingsManager.aiToneStyle.roleTag)")
+                                .font(.system(size: 13))
+                                .foregroundColor(Theme.textSecondary)
                         }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12))
+                            .foregroundColor(Theme.textSecondary)
                     }
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
                 
                 Divider()
                     .background(Color.white.opacity(0.1))
-                
-                // 自动生成开关
-                SettingsToggleRow(
-                    title: String.localized(.autoGenerateTitle),
-                    subtitle: String.localized(.autoGenerateTitleDesc),
-                    isOn: Binding(
-                        get: { settingsManager.autoGenerateTitle },
-                        set: { settingsManager.setAutoGenerateTitle($0) }
-                    )
-                )
                 
                 SettingsToggleRow(
                     title: String.localized(.autoGenerateTags),
@@ -404,6 +456,26 @@ struct SettingsView: View {
     }
     
     // MARK: - 辅助
+    
+    private func formatExpiryDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeZone = .current
+        formatter.locale = Locale.current
+        return formatter.string(from: date)
+    }
+    
+    private func showManageSubscriptions() {
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive })
+            ?? UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first else { return }
+        Task {
+            try? await AppStore.showManageSubscriptions(in: scene)
+        }
+    }
     
     private var appVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"

@@ -199,21 +199,6 @@ struct DiaryDetailView: View {
                 .lineSpacing(6)
                 .foregroundColor(Theme.textPrimary)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            
-            if entry.isAnalyzed, let analysis = entry.aiAnalysisResult {
-                // 折叠的 AI 分析结果（可选展示）
-                DisclosureGroup {
-                    Text(analysis)
-                        .font(.footnote)
-                        .foregroundColor(Theme.textSecondary)
-                        .padding(.top, 8)
-                } label: {
-                    Text(String.localized(.aiViewOfImage))
-                        .font(.caption)
-                        .foregroundColor(Theme.accent)
-                }
-                .tint(Theme.accent)
-            }
         }
         .padding(20)
         .background(

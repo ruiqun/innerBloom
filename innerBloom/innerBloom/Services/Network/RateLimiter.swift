@@ -107,7 +107,7 @@ actor RateLimiter {
     /// - Returns: 限流检查结果
     func checkAndRecord() -> RateLimitResult {
         let result = checkLimit()
-        if result.isAllowed {
+        if case .allowed = result {
             recordRequest()
         }
         return result
@@ -155,7 +155,7 @@ extension RateLimiter {
             
             // 等待后重新检查
             let secondCheck = checkAndRecord()
-            guard secondCheck.isAllowed else {
+            guard case .allowed = secondCheck else {
                 throw RateLimitError.tooManyRequests(retryAfter: retryAfter)
             }
             

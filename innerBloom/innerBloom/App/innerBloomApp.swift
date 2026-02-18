@@ -60,6 +60,9 @@ struct innerBloomApp: App {
                 // App 首次启动
                 print("[App] 🚀 innerBloom launched")
                 environmentService.onAppBecomeActive()
+                // B-024: 啟動時載入快取並同步 Premium 狀態
+                IAPManager.shared.loadCachedStatus()
+                Task { await IAPManager.shared.syncPremiumStatus() }
             }
         }
     }
@@ -97,6 +100,8 @@ struct innerBloomApp: App {
             if oldPhase != .active {
                 print("[App] 📱 App became active (from \(oldPhase))")
                 environmentService.onAppBecomeActive()
+                // B-024: 回到前台時同步 Premium 狀態
+                Task { await IAPManager.shared.syncPremiumStatus() }
             }
             
         case .inactive:

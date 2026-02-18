@@ -31,14 +31,14 @@ enum AppearanceMode: String, Codable, CaseIterable {
     }
 }
 
-/// AI 口吻风格 (D-007)
-/// B-016: 统一日记风格与 AI 口吻设定
-/// B-017: 支持多语言
+/// 陪伴角色 (D-022, B-029)
+/// 原 AIToneStyle，改為「陪伴角色」呈現（不出現 AI 字樣）
+/// F-025: 阿暖、阿衡、阿樂、阿澄
 enum AIToneStyle: String, Codable, CaseIterable {
-    case warm = "warm"           // 温暖治愈
-    case minimal = "minimal"     // 极简客观
-    case humorous = "humorous"   // 幽默风趣
-    case empathetic = "empathetic" // 共情理解
+    case warm = "warm"           // 阿暖｜貼心好友
+    case minimal = "minimal"     // 阿衡｜理性同事
+    case humorous = "humorous"   // 阿樂｜幽默搭子
+    case empathetic = "empathetic" // 阿澄｜懂你的人（預設）
     
     /// B-017: 本地化显示名称
     var displayName: String {
@@ -50,6 +50,26 @@ enum AIToneStyle: String, Codable, CaseIterable {
         }
     }
     
+    /// B-029: 角色名稱（如「阿暖」）
+    var roleName: String {
+        switch self {
+        case .warm: return String.localized(.roleNameWarm)
+        case .minimal: return String.localized(.roleNameMinimal)
+        case .humorous: return String.localized(.roleNameHumorous)
+        case .empathetic: return String.localized(.roleNameEmpathetic)
+        }
+    }
+    
+    /// B-029: 角色標籤（如「貼心好友」）
+    var roleTag: String {
+        switch self {
+        case .warm: return String.localized(.roleTagWarm)
+        case .minimal: return String.localized(.roleTagMinimal)
+        case .humorous: return String.localized(.roleTagHumorous)
+        case .empathetic: return String.localized(.roleTagEmpathetic)
+        }
+    }
+    
     /// B-017: 本地化描述
     var description: String {
         switch self {
@@ -57,6 +77,16 @@ enum AIToneStyle: String, Codable, CaseIterable {
         case .minimal: return String.localized(.toneMinimalDesc)
         case .humorous: return String.localized(.toneHumorousDesc)
         case .empathetic: return String.localized(.toneEmpatheticDesc)
+        }
+    }
+    
+    /// B-029: 示例回覆（S-007 角色卡片用）
+    var exampleReply: String {
+        switch self {
+        case .warm: return String.localized(.roleExampleWarm)
+        case .minimal: return String.localized(.roleExampleMinimal)
+        case .humorous: return String.localized(.roleExampleHumorous)
+        case .empathetic: return String.localized(.roleExampleEmpathetic)
         }
     }
     
@@ -149,8 +179,9 @@ struct UserSettings: Codable {
     
     // MARK: - AI 设定
     
-    /// AI 口吻偏好
-    var aiToneStyle: AIToneStyle = .warm
+    /// 陪伴角色偏好 (D-021, B-029)
+    /// F-025 預設：阿澄｜懂你的人
+    var aiToneStyle: AIToneStyle = .empathetic
     
     /// 是否自动生成标题
     var autoGenerateTitle: Bool = true
@@ -206,7 +237,7 @@ struct UserSettings: Codable {
     /// 重置为默认值
     mutating func resetToDefaults() {
         appearanceMode = .dark
-        aiToneStyle = .warm
+        aiToneStyle = .empathetic
         autoGenerateTitle = true
         autoGenerateTags = true
         appLanguage = .zhHant

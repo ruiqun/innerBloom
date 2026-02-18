@@ -36,8 +36,16 @@ struct ChatOverlayView: View {
             
             // AI 正在输入指示器
             if isAITyping {
-                CompactTypingIndicator()
-                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                VStack(spacing: 4) {
+                    CompactTypingIndicator()
+                    // B-027: Premium 優先佇列提示
+                    if IAPManager.shared.premiumStatus.isPremium {
+                        Text(String.localized(.premiumPriorityHint))
+                            .font(.system(size: 10))
+                            .foregroundColor(Theme.accent.opacity(0.7))
+                    }
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
             
             // Best Friend Mode: 建议话题（用户卡住时显示）

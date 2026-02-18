@@ -148,6 +148,20 @@ enum L10nKey: String, CaseIterable {
     
     // MARK: - 设定页
     case settings = "settings"
+    case companionRole = "companion_role"  // B-029: 陪伴角色（取代 aiToneStyle 文案）
+    case companionRoleLockedHint = "companion_role_locked_hint"  // B-029: 非 Premium 提示
+    case roleNameWarm = "role_name_warm"       // 阿暖
+    case roleNameMinimal = "role_name_minimal" // 阿衡
+    case roleNameHumorous = "role_name_humorous" // 阿樂
+    case roleNameEmpathetic = "role_name_empathetic" // 阿澄
+    case roleTagWarm = "role_tag_warm"         // 貼心好友
+    case roleTagMinimal = "role_tag_minimal"   // 理性同事
+    case roleTagHumorous = "role_tag_humorous" // 幽默搭子
+    case roleTagEmpathetic = "role_tag_empathetic" // 懂你的人
+    case roleExampleWarm = "role_example_warm"
+    case roleExampleMinimal = "role_example_minimal"
+    case roleExampleHumorous = "role_example_humorous"
+    case roleExampleEmpathetic = "role_example_empathetic"
     case appearance = "appearance"
     case darkMode = "dark_mode"
     case lightMode = "light_mode"
@@ -264,6 +278,45 @@ enum L10nKey: String, CaseIterable {
     case yourRights = "your_rights"
     case yourRightsContent = "your_rights_content"
     case lastUpdated = "last_updated"
+    
+    // MARK: - B-022/B-023 Premium 付費牆
+    case upgradePremium = "upgrade_premium"
+    case premium = "premium"
+    case premiumTitle = "premium_title"
+    case premiumSubtitle = "premium_subtitle"
+    case premiumBenefits = "premium_benefits"
+    case premiumBenefitUnlimitedChat = "premium_benefit_unlimited_chat"
+    case premiumBenefitUnlimitedSummary = "premium_benefit_unlimited_summary"
+    case premiumBenefitPriority = "premium_benefit_priority"
+    case premiumBenefitRoles = "premium_benefit_roles"
+    case premiumMonthly = "premium_monthly"
+    case premiumYearly = "premium_yearly"
+    case premiumPerMonth = "premium_per_month"
+    case premiumSubscribe = "premium_subscribe"
+    case premiumSyncing = "premium_syncing"
+    case restorePurchases = "restore_purchases"
+    case restoreSuccess = "restore_success"
+    case restoreNoPurchase = "restore_no_purchase"
+    case restoreNoPurchaseHint = "restore_no_purchase_hint"
+    case premiumProductsLoadHint = "premium_products_load_hint"
+    case premiumRetryLoad = "premium_retry_load"
+    case termsOfService = "terms_of_service"
+    case subscriptionTerms = "subscription_terms"
+    case premiumAlreadySubscribed = "premium_already_subscribed"
+    case manageSubscription = "manage_subscription"
+    case premiumExpiresOn = "premium_expires_on"
+    case restoreCanceledHint = "restore_canceled_hint"
+    
+    // MARK: - B-026 用量限制
+    case usageLimitTitle = "usage_limit_title"
+    case usageLimitInteractionDesc = "usage_limit_interaction_desc"
+    case usageLimitSummaryDesc = "usage_limit_summary_desc"
+    case usageLimitDismiss = "usage_limit_dismiss"
+    case usageInteractionHint = "usage_interaction_hint"
+    case usageSummaryHint = "usage_summary_hint"
+    
+    // MARK: - B-027 Premium 優先佇列
+    case premiumPriorityHint = "premium_priority_hint"
     
     // MARK: - B-020 稳定性相关
     case rateLimitMessage = "rate_limit_message"
@@ -390,6 +443,22 @@ enum L10nKey: String, CaseIterable {
         case .connected: return "已連接"
         case .notConfigured: return "未配置"
             
+        // B-029 陪伴角色
+        case .companionRole: return "陪伴角色"
+        case .companionRoleLockedHint: return "升級 Premium 可切換陪伴角色"
+        case .roleNameWarm: return "阿暖"
+        case .roleNameMinimal: return "阿衡"
+        case .roleNameHumorous: return "阿樂"
+        case .roleNameEmpathetic: return "阿澄"
+        case .roleTagWarm: return "貼心好友"
+        case .roleTagMinimal: return "理性同事"
+        case .roleTagHumorous: return "幽默搭子"
+        case .roleTagEmpathetic: return "懂你的人"
+        case .roleExampleWarm: return "辛苦啦，先喘口氣～要不要跟我說說發生了什麼？"
+        case .roleExampleMinimal: return "1. 發生的事 2. 你的感受 3. 接下來打算"
+        case .roleExampleHumorous: return "哈哈這也太好笑了吧！所以後來呢？"
+        case .roleExampleEmpathetic: return "我懂那種感覺。能多跟我說說，是什麼讓你這樣想嗎？"
+            
         // AI 口吻风格
         case .toneWarm: return "溫暖治癒"
         case .toneWarmDesc: return "像好朋友一樣，給你溫暖的陪伴"
@@ -477,6 +546,45 @@ enum L10nKey: String, CaseIterable {
         case .yourRights: return "您的權利"
         case .yourRightsContent: return "• 您可以在設定中關閉媒體分析和位置分享\n• 您可以隨時刪除您的日記和相關資料\n• 您可以聯繫我們請求匯出或刪除所有資料"
         case .lastUpdated: return "最後更新：2024年12月"
+            
+        // B-022/B-023 Premium
+        case .upgradePremium: return "升級 Premium"
+        case .premium: return "Premium"
+        case .premiumTitle: return "解鎖完整陪伴體驗"
+        case .premiumSubtitle: return "不限聊天與總結，優先回覆，更多陪伴角色"
+        case .premiumBenefits: return "Premium 權益"
+        case .premiumBenefitUnlimitedChat: return "陪伴對話不限次數"
+        case .premiumBenefitUnlimitedSummary: return "每日總結不限次數"
+        case .premiumBenefitPriority: return "優先回覆，更快回應"
+        case .premiumBenefitRoles: return "可切換更多陪伴角色"
+        case .premiumMonthly: return "月付"
+        case .premiumYearly: return "年付（省更多）"
+        case .premiumPerMonth: return "約 %@/月"
+        case .premiumSubscribe: return "訂閱"
+        case .premiumSyncing: return "同步中..."
+        case .restorePurchases: return "恢復購買"
+        case .restoreSuccess: return "已恢復 Premium"
+        case .restoreNoPurchase: return "找不到可恢復的購買記錄"
+        case .restoreNoPurchaseHint: return "您尚未購買 Premium，請點擊上方「訂閱」按鈕完成購買"
+        case .premiumProductsLoadHint: return "若未看到訂閱方案，請先點擊下方「重試載入」。若出現「Sign in with Apple Account」視窗，請點「OK」完成模擬登入"
+        case .premiumRetryLoad: return "重試載入"
+        case .termsOfService: return "服務條款"
+        case .subscriptionTerms: return "訂閱將自動續期，可隨時在 App Store 設定中取消"
+        case .premiumAlreadySubscribed: return "你已是 Premium 會員"
+        case .manageSubscription: return "管理訂閱"
+        case .premiumExpiresOn: return "到期日"
+        case .restoreCanceledHint: return "若您已取消訂閱，訂閱將於到期日後失效，屆時無法恢復。"
+            
+        // B-026 用量限制
+        case .usageLimitTitle: return "今天的陪伴額度用完了"
+        case .usageLimitInteractionDesc: return "免費版每篇回憶最多 4 次陪伴互動，升級 Premium 可享不限次陪伴 ✨"
+        case .usageLimitSummaryDesc: return "免費版每天可生成 1 次回憶總結，升級 Premium 可不限次生成 ✨"
+        case .usageLimitDismiss: return "明天再說"
+        case .usageInteractionHint: return "剩餘 %d 次互動"
+        case .usageSummaryHint: return "今日總結額度已用完"
+            
+        // B-027 Premium 優先佇列
+        case .premiumPriorityHint: return "優先回覆中…"
             
         // B-020 稳定性
         case .rateLimitMessage: return "操作過於頻繁，請 %d 秒後再試"
@@ -567,8 +675,22 @@ enum L10nKey: String, CaseIterable {
         case .appearance: return "Appearance"
         case .darkMode: return "Dark Mode"
         case .lightMode: return "Light Mode"
-        case .aiAssistant: return "AI Assistant"
-        case .aiToneStyle: return "AI Tone Style"
+        case .companionRole: return "Companion Role"
+        case .companionRoleLockedHint: return "Upgrade to Premium to switch companion roles"
+        case .roleNameWarm: return "Nuan"
+        case .roleNameMinimal: return "Heng"
+        case .roleNameHumorous: return "Le"
+        case .roleNameEmpathetic: return "Cheng"
+        case .roleTagWarm: return "Caring Friend"
+        case .roleTagMinimal: return "Rational Colleague"
+        case .roleTagHumorous: return "Fun Buddy"
+        case .roleTagEmpathetic: return "One Who Gets You"
+        case .roleExampleWarm: return "You've had a long day. Want to tell me what happened?"
+        case .roleExampleMinimal: return "1. What happened 2. How you feel 3. Next steps"
+        case .roleExampleHumorous: return "That's hilarious! So what happened next?"
+        case .roleExampleEmpathetic: return "I get it. Can you tell me more about what made you feel that way?"
+        case .aiAssistant: return "Companion"
+        case .aiToneStyle: return "Companion Role"
         case .autoGenerateTitle: return "Auto Generate Title"
         case .autoGenerateTitleDesc: return "AI automatically generates diary title when saving"
         case .autoGenerateTags: return "Auto Generate Tags"
@@ -680,6 +802,45 @@ enum L10nKey: String, CaseIterable {
         case .yourRights: return "Your Rights"
         case .yourRightsContent: return "• You can disable media analysis and location sharing in Settings\n• You can delete your diaries and related data at any time\n• You can contact us to export or delete all your data"
         case .lastUpdated: return "Last Updated: December 2024"
+            
+        // B-022/B-023 Premium
+        case .upgradePremium: return "Upgrade Premium"
+        case .premium: return "Premium"
+        case .premiumTitle: return "Unlock Full Companion Experience"
+        case .premiumSubtitle: return "Unlimited chat & summary, priority replies, more companion roles"
+        case .premiumBenefits: return "Premium Benefits"
+        case .premiumBenefitUnlimitedChat: return "Unlimited companion chat"
+        case .premiumBenefitUnlimitedSummary: return "Unlimited daily summaries"
+        case .premiumBenefitPriority: return "Priority replies, faster response"
+        case .premiumBenefitRoles: return "Switch between more companion roles"
+        case .premiumMonthly: return "Monthly"
+        case .premiumYearly: return "Yearly (Save more)"
+        case .premiumPerMonth: return "~%@/month"
+        case .premiumSubscribe: return "Subscribe"
+        case .premiumSyncing: return "Syncing..."
+        case .restorePurchases: return "Restore Purchases"
+        case .restoreSuccess: return "Premium Restored"
+        case .restoreNoPurchase: return "No purchases to restore"
+        case .restoreNoPurchaseHint: return "You haven't purchased Premium yet. Please tap Subscribe above to purchase"
+        case .premiumProductsLoadHint: return "If you don't see plans, tap Retry below. When \"Sign in with Apple Account\" appears, tap OK to simulate sign-in"
+        case .premiumRetryLoad: return "Retry Load"
+        case .termsOfService: return "Terms of Service"
+        case .subscriptionTerms: return "Subscription auto-renews. Cancel anytime in App Store settings"
+        case .premiumAlreadySubscribed: return "You are already a Premium member"
+        case .manageSubscription: return "Manage Subscription"
+        case .premiumExpiresOn: return "Expires"
+        case .restoreCanceledHint: return "If you canceled, your subscription will end after the expiry date and cannot be restored."
+            
+        // B-026 用量限制
+        case .usageLimitTitle: return "Today's companion sessions are used up"
+        case .usageLimitInteractionDesc: return "Free plan allows up to 4 companion interactions per memory. Upgrade to Premium for unlimited access ✨"
+        case .usageLimitSummaryDesc: return "Free plan allows 1 memory summary per day. Upgrade to Premium for unlimited summaries ✨"
+        case .usageLimitDismiss: return "Maybe tomorrow"
+        case .usageInteractionHint: return "%d interactions left"
+        case .usageSummaryHint: return "Daily summary limit reached"
+            
+        // B-027 Premium 優先佇列
+        case .premiumPriorityHint: return "Priority response..."
             
         // B-020 稳定性
         case .rateLimitMessage: return "Too many requests, please try again in %d seconds"

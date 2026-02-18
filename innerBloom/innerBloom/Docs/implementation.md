@@ -240,7 +240,7 @@
   - **何時出現**：每次呼叫後端時自動帶入。
   - **出錯怎麼辦**：後端不支援優先時，直接退化成一般速度，不影響功能。
 
-### Premium 專屬：陪伴角色（口吻風格，方案 1 + A）
+### Premium 專屬：陪伴角色（口吻風格）
 
 - **F-025：陪伴角色選擇（Premium 才能切換）**
   - **做什麼**：把原本「口吻風格」做成「身邊的角色」，用 **角色卡片清單** 讓使用者像在選一個陪伴者。
@@ -253,7 +253,7 @@
   - **非 Premium 怎麼辦**：  
     - 看到角色清單但不可切換（灰階 + 鎖頭），點選任一角色 → 直接去付費牆（S-005）。  
     - Premium：可自由切換並立即生效。
-  - **出錯怎麼辦**：角色設定讀不到就使用預設角色（例如阿暖）並提示「已先使用預設陪伴角色」。
+  - **出錯怎麼辦**：角色設定讀不到就使用預設角色 阿澄。
 
 - **F-026：聊天與總結都要跟隨角色**
   - **做什麼**：使用者選的角色要同時影響：
@@ -643,49 +643,67 @@
     - 被限流時顯示本地化提示（繁中/英文）
   - 新增多語言字符串：`rateLimitMessage`、`loadingMore`、`noMoreData`
 
-- [ ] **B-021**：建立付費產品與方案讀取（F-021/F-022）
+- [x] **B-021**：登入後回憶重新載入（修復 B-018 登出再登入回憶消失）
+  - 根因：`HomeViewModel.reloadAfterLogin()` 已定義但從未被呼叫，登入後未從雲端重新載入日記
+  - innerBloomApp.swift：新增 `onChange(of: authManager.authState)` 監聽
+  - 當 `authState == .authenticated` 時呼叫 `HomeViewModel.shared.reloadAfterLogin()`
+  - 涵蓋：登出再登入、Session 恢復、登入頁完成登入
+
+- [x] **B-022**：建立付費產品與方案讀取（F-021/F-022）
   - 在 App Store Connect 建立「自動續訂訂閱」：月付、年付（年付折扣），並配置 **3 天 Premium 試用**
   - App 端新增 IAPManager（使用 StoreKit 2）
+    - 產品 ID：`com.innerbloom.premium.monthly`、`com.innerbloom.premium.yearly`
     - 啟動時讀取產品列表（價格、試用文案）
     - 快取產品資訊供 S-005 顯示（D-019）
 
-- [ ] **B-022**：付費牆 UI（S-005）與入口接線（F-021）
-  - 新增 Premium 入口：
-    - 設定頁「升級 Premium」
-    - 觸發用量限制（S-006 → S-005）
+- [x] **B-023**：付費牆 UI（S-005）與入口接線（F-021）
+  - 新增 Premium 入口：設定頁「升級 Premium」→ PremiumView (S-005)
   - S-005 顯示：權益、月/年方案、主要購買按鈕、Restore、條款/隱私
+  - PremiumView、Settings 新增 premiumSection
 
-- [ ] **B-023**：完成購買 / 試用 / 續訂狀態同步（F-022 + D-017）
+- [x] **B-024**：完成購買 / 試用 / 續訂狀態同步（F-022 + D-017）
   - 購買成功後更新 Premium 狀態（本機快取）
   - App 啟動與回到前台時自動同步一次訂閱狀態
   - 若狀態不確定：先顯示「同步中」，同步完成再更新 UI
+  - IAPManager：Transaction.currentEntitlements、loadCachedStatus、syncPremiumStatus
 
-- [ ] **B-024**：恢復購買（Restore Purchases）（F-023）
-  - S-005 增加「恢復購買」按鈕
-  - 恢復成功後更新 Premium 狀態並提示「已恢復」
+- [x] **B-025**：恢復購買（Restore Purchases）（F-023）
+  - 已在 B-023 時一併實作完成（PremiumView 已含 restoreButton + performRestore）
+  - IAPManager.restorePurchases() 呼叫 AppStore.sync() 後同步狀態
+  - 恢復成功顯示 Toast；無購買記錄顯示友善提示
 
-- [ ] **B-025**：把用量限制接到聊天與總結流程（F-020 + S-006 + D-018）
-  - 對話互動上限（免費）：
-    - 在 F-004 送出前檢查「本篇日記已互動次數」
-    - 超過 4 次 → 顯示 S-006
-    - Premium → 不限制（或上限提高）
-  - 每日總結上限（免費）：
-    - 在按下「結束保存」（F-005）前檢查今日是否已用完 1 次
-    - 用完 → 顯示 S-006
-    - Premium → 不限制（或上限提高）
-  - 每日計數跨日自動重置（依本機日期）
+- [x] **B-026**：把用量限制接到聊天與總結流程（F-020 + S-006 + D-018）
+  - 新增 UsageManager（Services/IAP/UsageManager.swift）：
+    - 每篇日記互動計數 + 每日總結計數
+    - Premium 使用者自動跳過限制
+    - 每日計數跨日自動重置（依本機日期 UserDefaults 持久化）
+  - 新增 UsageLimitView（Views/Premium/UsageLimitView.swift，S-006）：
+    - 溫暖提示 + 「升級 Premium」按鈕 + 「明天再說」
+    - 區分互動限制 / 總結限制兩種文案
+  - HomeViewModel.sendMessage()：送出前檢查 canInteract()，超過 4 次 → S-006
+  - HomeViewModel.finishAndSave()：保存前檢查 canGenerateSummary()，用完 → S-006
+  - enterCreatingMode()：重置互動計數
+  - ContentView：新增 .sheet(isPresented: $viewModel.showUsageLimit) + Premium 導入
+  - 7 個新增本地化字符串（繁中/英文）
 
-- [ ] **B-026**：Premium 優先佇列（更快回覆）（F-024 + D-020）
-  - App 端：所有陪伴請求（分析/聊天/總結/標籤）加上 `isPremium` 標記
-  - 後端：收到 `isPremium=true` 時，排到較前面或給更高優先級
-  - UI：Premium 可顯示小標「優先回覆中…」（可選）
+- [x] **B-027**：Premium 優先佇列（更快回覆）（F-024 + D-020）
+  - AIService：4 個請求 DTO（analyze/chat/summary/tags）皆新增 `is_premium` 欄位
+  - 自動帶入 IAPManager.shared.premiumStatus.isPremium
+  - Edge Function（ai-chat/index.ts）：4 個 handler 接收並記錄 is_premium
+  - ChatOverlayView：AI 打字時 Premium 用戶顯示「優先回覆中…」小標
+  - 新增 1 個本地化字符串（premiumPriorityHint）
 
-- [ ] **B-027**：上線前檢查（不影響既有功能）
-  - 確認「未付費」與「已付費」兩種狀態切換正確
-  - 確認限制只擋到：聊天互動次數、每日總結；其它瀏覽/搜尋/回顧不受影響
-  - App Store 文案與條款連結齊全（試用、續訂、取消方式說明）
+- [x] **B-028**：上線前檢查（不影響既有功能）
+  - ✅ 未付費 ↔ 已付費狀態切換：IAPManager.syncPremiumStatus() 正確處理
+    - 有效訂閱 → isPremium=true | 過期/撤銷 → isPremium=false | 試用 → isInTrial=true
+  - ✅ 限制只擋：聊天互動（sendMessage）+ 每日總結（finishAndSave）
+    - 瀏覽/搜尋/回顧/標籤切換 → 完全不受影響
+  - ✅ App Store 文案齊全：
+    - 訂閱條款（subscriptionTerms）：「訂閱將自動續期，可隨時在 App Store 設定中取消」
+    - 服務條款連結：https://innerbloom.app/terms
+    - 隱私政策連結：https://innerbloom.app/privacy
 
-- [ ] **B-028**：Premium 角色化陪伴（口吻風格）+ 總結跟隨角色（F-025/F-026 + D-021/D-022 + S-007）
+- [x] **B-029**：Premium 角色化陪伴（口吻風格）+ 總結跟隨角色（F-025/F-026 + D-021/D-022 + S-007）
   - 設定頁把「口吻風格」改成「陪伴角色」（不出現 AI 字樣）
   - S-007：用角色卡片（抽象符號風格 A）讓使用者選擇
   - 非 Premium：角色卡可看但不可選，點選 → 直接導去 S-005

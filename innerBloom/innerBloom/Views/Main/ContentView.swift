@@ -32,7 +32,7 @@ struct ContentView: View {
             Theme.background
                 .ignoresSafeArea()
             
-            // 内容区域
+            // 内容区域（底部不保留安全區域，減少留白）
             VStack {
                 if viewModel.currentMode == .browsing {
                     browsingModeView
@@ -42,6 +42,7 @@ struct ContentView: View {
                         .transition(.opacity.combined(with: .move(edge: .trailing)))
                 }
             }
+            .ignoresSafeArea(edges: .bottom)
             
             // 保存中/上传中/生成中遮罩 (B-004, F-005)
             if viewModel.isSavingMedia || viewModel.isUploading || viewModel.isGenerating {
@@ -82,6 +83,19 @@ struct ContentView: View {
         // B-016: 设定页面
         .sheet(isPresented: $showSettings) {
             SettingsView()
+        }
+        // B-026: 用量限制提示（S-006）
+        .sheet(isPresented: $viewModel.showUsageLimit) {
+            UsageLimitView(
+                limitType: viewModel.usageLimitType,
+                onUpgrade: {
+                    viewModel.showPremiumFromUsage = true
+                }
+            )
+        }
+        // B-026: 由 S-006 導入的 Premium 付費牆
+        .sheet(isPresented: $viewModel.showPremiumFromUsage) {
+            PremiumView()
         }
         // B-016: 启动时应用外观模式
         .onAppear {
@@ -313,106 +327,102 @@ struct ContentView: View {
     // MARK: - 浏览模式 (极简列表)
     
     private var browsingModeView: some View {
-        VStack(spacing: 16) {
-            // 顶部 Header
-            HStack {
-                Text("InnerBloom")
-                    .font(Theme.titleFont())
-                    .tracking(Theme.titleTracking)
-                    .foregroundColor(Theme.textPrimary)
-                
-                Spacer()
-                
-                // B-016: 设定按钮
-                Button(action: {
-                    showSettings = true
-                }) {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 18))
-                        .foregroundColor(Theme.textSecondary)
-                }
-            }
-            .padding(.horizontal, 24)
-            .padding(.top, 16)
-            
-            // B-014: 搜索框
-            searchBarView
-                .padding(.horizontal, 24)
-            
-            // 标签图块 (需要调整 TagChipsView 样式以匹配)
-            // 暂时复用，建议后续优化 TagChipsView 样式
-            TagChipsView(
-                tags: viewModel.availableTags,
-                selectedTag: viewModel.selectedTag,
-                onSelectTag: { tag in
-                    viewModel.clearSearch()  // 切换标签时清除搜索
-                    viewModel.selectTag(tag)
-                }
-            )
-            .padding(.leading, 8)
-            
-            // B-014: 搜索结果提示
-            if viewModel.isShowingSearchResults {
-                searchResultsHeader
-            }
-            
-            // B-015: 同步失败 Banner
-            if viewModel.hasFailedEntries && !viewModel.isShowingSearchResults {
-                syncFailedBanner
-            }
-            
-            // 日记列表（B-013：支持下拉刷新）
-            // B-017: 支持多语言
-            ScrollView {
-                DiaryListView(
-                    entries: viewModel.displayEntries,  // B-014: 使用 displayEntries
-                    currentTagName: viewModel.isShowingSearchResults ? String.localized(.searchResult) : viewModel.selectedTag.name,
-                    isLoading: viewModel.isLoading || viewModel.isSearching,
-                    onTapEntry: { entry in
-                        // Detail
-                        viewModel.showDiaryDetail(entry)
-                    },
-                    onRetry: { entry in  // B-015: 重试回调
-                        viewModel.retryCloudSync(for: entry.id)
-                    },
-                    onEntryAppear: { entry in  // B-020: 无限滚动分页
-                        viewModel.onDiaryAppear(entry)
-                    },
-                    isLoadingMore: viewModel.isLoadingMore,
-                    hasMoreData: viewModel.hasMoreData
-                )
-                .padding(.top, 8)
-            }
-            
-            Spacer()
-            
-            // 底部操作栏 (模拟 TabBar 位置，放置新增入口)
-            HStack {
-                Spacer()
-                
-                // 极简新增按钮
-                Button(action: {
-                    withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
-                        viewModel.enterCreatingMode()
+        ZStack(alignment: .bottomTrailing) {
+            VStack(spacing: 16) {
+                // 顶部 Header
+                HStack {
+                    Text("InnerBloom")
+                        .font(Theme.titleFont())
+                        .tracking(Theme.titleTracking)
+                        .foregroundColor(Theme.textPrimary)
+                    
+                    Spacer()
+                    
+                    // B-016: 设定按钮
+                    Button(action: {
+                        showSettings = true
+                    }) {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 18))
+                            .foregroundColor(Theme.textSecondary)
                     }
-                }) {
-                    Circle()
-                        .stroke(Theme.accent.opacity(0.5), lineWidth: 1)
-                        .frame(width: 56, height: 56)
-                        .overlay(
-                            Image(systemName: "plus")
-                                .font(.system(size: 24, weight: .light))
-                                .foregroundColor(Theme.accent)
-                        )
-                        .background(
-                            Circle()
-                                .fill(Theme.accent.opacity(0.1))
-                                .blur(radius: 5)
-                        )
                 }
-                .padding(.bottom, 20)
-                .padding(.trailing, 24)
+                .padding(.horizontal, 24)
+                .padding(.top, 16)
+                
+                // B-014: 搜索框
+                searchBarView
+                    .padding(.horizontal, 24)
+                
+                // 标签图块 (需要调整 TagChipsView 样式以匹配)
+                // 暂时复用，建议后续优化 TagChipsView 样式
+                TagChipsView(
+                    tags: viewModel.availableTags,
+                    selectedTag: viewModel.selectedTag,
+                    onSelectTag: { tag in
+                        viewModel.clearSearch()  // 切换标签时清除搜索
+                        viewModel.selectTag(tag)
+                    }
+                )
+                .padding(.leading, 8)
+                
+                // B-014: 搜索结果提示
+                if viewModel.isShowingSearchResults {
+                    searchResultsHeader
+                }
+                
+                // B-015: 同步失败 Banner
+                if viewModel.hasFailedEntries && !viewModel.isShowingSearchResults {
+                    syncFailedBanner
+                }
+                
+                // 日记列表（B-013：支持下拉刷新）
+                // B-017: 支持多语言
+                ScrollView {
+                    DiaryListView(
+                        entries: viewModel.displayEntries,  // B-014: 使用 displayEntries
+                        currentTagName: viewModel.isShowingSearchResults ? String.localized(.searchResult) : viewModel.selectedTag.name,
+                        isLoading: viewModel.isLoading || viewModel.isSearching,
+                        onTapEntry: { entry in
+                            // Detail
+                            viewModel.showDiaryDetail(entry)
+                        },
+                        onRetry: { entry in  // B-015: 重试回调
+                            viewModel.retryCloudSync(for: entry.id)
+                        },
+                        onEntryAppear: { entry in  // B-020: 无限滚动分页
+                            viewModel.onDiaryAppear(entry)
+                        },
+                        isLoadingMore: viewModel.isLoadingMore,
+                        hasMoreData: viewModel.hasMoreData
+                    )
+                    .padding(.top, 8)
+                    .padding(.bottom, 80)
+                }
             }
+            
+            // 浮动新增按钮（右下角）
+            Button(action: {
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                    viewModel.enterCreatingMode()
+                }
+            }) {
+                Circle()
+                    .stroke(Theme.accent.opacity(0.5), lineWidth: 1)
+                    .frame(width: 56, height: 56)
+                    .overlay(
+                        Image(systemName: "plus")
+                            .font(.system(size: 24, weight: .light))
+                            .foregroundColor(Theme.accent)
+                    )
+                    .background(
+                        Circle()
+                            .fill(Theme.accent.opacity(0.1))
+                            .blur(radius: 5)
+                    )
+            }
+            .padding(.trailing, 24)
+            .padding(.bottom, 40)
         }
         // 手势支持
         .gesture(

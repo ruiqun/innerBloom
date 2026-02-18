@@ -17,7 +17,8 @@ struct TagChipsView: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 12) {
-                ForEach(tags) { tag in
+                // B-029+: Landing 只保留「全部」標籤，其他標籤改由搜尋存取
+                ForEach(tags.filter { $0.id == Tag.all.id }) { tag in
                     TagChipButton(
                         tag: tag,
                         isSelected: tag.id == selectedTag.id,

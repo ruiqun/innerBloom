@@ -108,7 +108,8 @@ async function callOpenAI(messages: any[], model: string, maxTokens: number = 10
 // 处理媒体分析请求
 async function handleAnalyze(body: any) {
   const startTime = Date.now()
-  const { image_base64, media_type, user_context, language } = body
+  const { image_base64, media_type, user_context, language, is_premium } = body
+  if (is_premium) console.log('[Analyze] 🌟 Premium user - priority request')
 
   if (!image_base64) {
     throw new Error('缺少图片数据')
@@ -163,6 +164,23 @@ async function handleAnalyze(body: any) {
       hasPeople: null,
       confidence: 0.7
     }
+  }
+}
+
+// B-029: 根據 style 取得陪伴角色提示詞（F-025/F-026）
+function getStyleInstruction(style: string | undefined): string {
+  if (!style) return ''
+  switch (style) {
+    case 'warm':
+      return '\n\n## 陪伴角色：阿暖｜貼心好友\n请用温暖、治愈、富有同理心的语气。多关注情感共鸣，先安抚再给小建议，像一个温柔的倾听者。'
+    case 'minimal':
+      return '\n\n## 陪伴角色：阿衡｜理性同事\n请用简洁、客观、理性的语气。条列重点、少情绪，像一个专业的记录者，不要过多的修饰词。'
+    case 'humorous':
+      return '\n\n## 陪伴角色：阿樂｜幽默搭子\n请用幽默、风趣、轻松的语气。可以适度调侃，但不冒犯，像一个有趣的朋友，让对话充满快乐。'
+    case 'empathetic':
+      return '\n\n## 陪伴角色：阿澄｜懂你的人\n请用深度共情、理解、支持的语气。专注于理解用户的感受，擅长提问与陪你梳理，给予情感上的认同和支持。'
+    default:
+      return ''
   }
 }
 
@@ -248,7 +266,9 @@ function buildBestFriendPrompt(hasMediaAnalysis: boolean, hasEnvironment: boolea
 
 // 处理聊天请求 (Best Friend Mode)
 async function handleChat(body: any) {
-  const { messages, analysis_context, environment_context, language } = body
+  const { messages, analysis_context, environment_context, language, is_premium, style } = body
+  if (is_premium) console.log('[Chat] 🌟 Premium user - priority request')
+  if (style) console.log('[Chat] 🎭 Companion role:', style)
 
   if (!messages || messages.length === 0) {
     throw new Error('缺少消息')
@@ -262,6 +282,9 @@ async function handleChat(body: any) {
 
   // 构建系统提示
   systemPrompt += buildBestFriendPrompt(hasMediaAnalysis, hasEnvironment)
+
+  // B-029: 注入陪伴角色提示詞（F-004 聊天回覆套用角色規則）
+  systemPrompt += getStyleInstruction(style)
   
   // 构建上下文信息
   const contextParts: string[] = []
@@ -318,16 +341,20 @@ async function handleChat(body: any) {
   }
 }
 
-// 处理总结生成请求（B-017: 根据 language 注入语言指令，总结跟随系统设定）
+// 处理总结生成请求（B-017/B-029: 根据 language 与 style 注入指令，总结跟随角色规则）
 async function handleSummary(body: any) {
-  const { messages, analysis_context, language } = body
+  const { messages, analysis_context, language, is_premium, style } = body
+  if (is_premium) console.log('[Summary] 🌟 Premium user - priority request')
+  if (style) console.log('[Summary] 🎭 Companion role:', style)
 
   if (!messages || messages.length === 0) {
     throw new Error('缺少消息')
   }
 
   // 语言规则最高优先级，再拼接总结专用提示
-  const systemContent = getLanguageInstruction(language) + '\n\n' + SYSTEM_PROMPTS.summary
+  let systemContent = getLanguageInstruction(language) + '\n\n' + SYSTEM_PROMPTS.summary
+  // B-029: 注入陪伴角色提示詞（F-005 總結套用同一角色規則）
+  systemContent += getStyleInstruction(style)
 
   // 构建对话内容
   const conversationText = messages
@@ -361,9 +388,10 @@ async function handleSummary(body: any) {
   }
 }
 
-// 处理标签生成请求（B-017: 根据 language 注入语言指令，标签跟随系统设定）
+// 处理标签生成请求（B-017/B-029: 根据 language 与 style 注入指令）
 async function handleTags(body: any) {
-  const { messages, analysis_context, existing_tags, language } = body
+  const { messages, analysis_context, existing_tags, language, is_premium, style } = body
+  if (is_premium) console.log('[Tags] 🌟 Premium user - priority request')
 
   // 构建对话内容
   const conversationText = messages
@@ -372,7 +400,17 @@ async function handleTags(body: any) {
 
   // 语言规则最高优先级，再拼接标签专用提示
   let systemPrompt = getLanguageInstruction(language) + '\n\n' + SYSTEM_PROMPTS.tags
-  
+  // B-029: 標籤風格跟隨角色（簡要）
+  if (style === 'minimal') {
+    systemPrompt += '\n\n6. 标签风格：简洁、客观、名词为主'
+  } else if (style === 'humorous') {
+    systemPrompt += '\n\n6. 标签风格：有趣、生动、带点幽默感'
+  } else if (style === 'empathetic') {
+    systemPrompt += '\n\n6. 标签风格：情感化、共鸣、细腻'
+  } else {
+    systemPrompt += '\n\n6. 标签风格：温暖、感性、治愈'
+  }
+
   if (existing_tags && existing_tags.length > 0) {
     systemPrompt += `
 

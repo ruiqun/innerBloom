@@ -45,8 +45,8 @@ final class HomeViewModel {
     /// 当前选中的日记（用于详情页展示 S-002）
     var selectedDiary: DiaryEntry?
     
-    /// 当前选择的日记风格
-    var selectedStyle: DiaryStyle = .warm
+    /// 当前选择的日记风格（B-029: 跟隨陪伴角色設定）
+    var selectedStyle: DiaryStyle = .empathetic
     
     // MARK: - 标签相关 (F-009)
     
@@ -187,6 +187,15 @@ final class HomeViewModel {
     var isLoadingEnvironment: Bool = false
     
     // MARK: - 状态标识
+    
+    /// 是否顯示用量限制 Sheet（S-006）
+    var showUsageLimit: Bool = false
+    
+    /// 用量限制類型
+    var usageLimitType: UsageLimitType = .interaction
+    
+    /// 是否顯示 Premium 付費牆（由 S-006 導入）
+    var showPremiumFromUsage: Bool = false
     
     /// 是否正在保存媒体
     var isSavingMedia: Bool = false
@@ -456,6 +465,17 @@ final class HomeViewModel {
         if let input = entry.userInputText?.lowercased(), input.contains(lowercasedKeyword) {
             return true
         }
+
+        // 搜索標籤名稱（簡單標籤搜尋體驗）
+        if !entry.tagIds.isEmpty {
+            let matchedTag = entry.tagIds.contains { tagId in
+                if let tag = availableTags.first(where: { $0.id == tagId }) {
+                    return tag.name.localizedCaseInsensitiveContains(keyword)
+                }
+                return false
+            }
+            if matchedTag { return true }
+        }
         
         return false
     }
@@ -661,6 +681,8 @@ final class HomeViewModel {
         currentMode = .creating
         // 重置状态
         resetCreatingState()
+        // B-026: 重置互動計數
+        UsageManager.shared.resetDiaryInteraction()
     }
     
     /// 取消创建，返回浏览模式
@@ -701,7 +723,7 @@ final class HomeViewModel {
         isSavingMedia = false
         isSavingDraft = false
         errorMessage = nil
-        selectedStyle = .warm       // Reset style
+        selectedStyle = DiaryStyle(from: SettingsManager.shared.aiToneStyle)  // B-029: 跟隨陪伴角色設定
     }
     
     /// 结束保存 (F-005, B-004, B-008, B-010, B-020: 用量保护)
@@ -716,6 +738,14 @@ final class HomeViewModel {
             return
         }
         
+        // B-026: 免費每日總結次數檢查
+        if !UsageManager.shared.canGenerateSummary() {
+            print("[HomeViewModel] ⚠️ Daily summary limit reached")
+            usageLimitType = .summary
+            showUsageLimit = true
+            return
+        }
+        
         // B-020: 保存用量保护
         Task { @MainActor in
             let rateLimitResult = await RateLimiter.save.checkAndRecord()
@@ -725,6 +755,9 @@ final class HomeViewModel {
                 }
                 return
             }
+            
+            // B-026: 記錄一次總結使用
+            UsageManager.shared.recordSummary()
             
             // ========== 第一阶段：前台立即响应（MainActor，毫秒级）==========
             performImmediateUIUpdate()
@@ -1423,6 +1456,14 @@ final class HomeViewModel {
         
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         
+        // B-026: 免費互動次數檢查
+        if !UsageManager.shared.canInteract() {
+            print("[HomeViewModel] ⚠️ Interaction limit reached")
+            usageLimitType = .interaction
+            showUsageLimit = true
+            return
+        }
+        
         // B-020: 客户端用量保护
         Task { @MainActor in
             let rateLimitResult = await RateLimiter.aiChat.checkAndRecord()
@@ -1432,6 +1473,9 @@ final class HomeViewModel {
                 }
                 return
             }
+            
+            // B-026: 記錄一次互動
+            UsageManager.shared.recordInteraction()
             
             // 添加用户消息到列表
             let userMsg = ChatMessage(sender: .user, content: trimmedText)

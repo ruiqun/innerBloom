@@ -124,18 +124,19 @@ enum RetryHelper {
     /// - Returns: 操作结果
     /// - Throws: 最后一次失败的错误
     static func withRetry<T>(
-        config: RetryConfig = .default,
+        config: RetryConfig? = nil,
         operation: @Sendable () async throws -> T
     ) async throws -> T {
+        let effectiveConfig = config ?? RetryConfig.default
         var lastError: Error?
         
-        for attempt in 0...config.maxRetries {
+        for attempt in 0...effectiveConfig.maxRetries {
             do {
                 let result = try await operation()
                 
                 // 如果之前有重试，打印成功日志
                 if attempt > 0 {
-                    print("[RetryHelper] ✅ Succeeded on attempt \(attempt + 1)/\(config.maxRetries + 1)")
+                    print("[RetryHelper] ✅ Succeeded on attempt \(attempt + 1)/\(effectiveConfig.maxRetries + 1)")
                 }
                 
                 return result
@@ -143,9 +144,9 @@ enum RetryHelper {
                 lastError = error
                 
                 // 检查是否应该重试
-                guard attempt < config.maxRetries && config.shouldRetry(error) else {
-                    if attempt >= config.maxRetries {
-                        print("[RetryHelper] ❌ All \(config.maxRetries + 1) attempts failed")
+                guard attempt < effectiveConfig.maxRetries && effectiveConfig.shouldRetry(error) else {
+                    if attempt >= effectiveConfig.maxRetries {
+                        print("[RetryHelper] ❌ All \(effectiveConfig.maxRetries + 1) attempts failed")
                     } else {
                         print("[RetryHelper] ❌ Error not retryable: \(error.localizedDescription)")
                     }
@@ -153,9 +154,9 @@ enum RetryHelper {
                 }
                 
                 // 计算延迟时间（指数退避）
-                let delay = calculateDelay(attempt: attempt, config: config)
+                let delay = calculateDelay(attempt: attempt, config: effectiveConfig)
                 
-                print("[RetryHelper] ⚠️ Attempt \(attempt + 1)/\(config.maxRetries + 1) failed: \(error.localizedDescription)")
+                print("[RetryHelper] ⚠️ Attempt \(attempt + 1)/\(effectiveConfig.maxRetries + 1) failed: \(error.localizedDescription)")
                 print("[RetryHelper] 🔄 Retrying in \(String(format: "%.1f", delay))s...")
                 
                 // 等待指定时间后重试

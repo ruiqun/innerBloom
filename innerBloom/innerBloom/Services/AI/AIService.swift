@@ -172,17 +172,20 @@ struct AIChatPreferences: Codable {
 }
 
 // MARK: - 日记风格
-/// B-016: DiaryStyle 保留向前兼容，新代码应使用 AIToneStyle
+/// B-016: DiaryStyle 保留向前兼容
+/// B-029: 支援 empathetic，傳給後端以套用角色規則
 enum DiaryStyle: String, CaseIterable, Codable {
-    case warm = "warm"          // 温暖治愈
-    case minimal = "minimal"    // 极简客观
-    case humorous = "humorous"  // 幽默风趣
+    case warm = "warm"          // 阿暖
+    case minimal = "minimal"    // 阿衡
+    case humorous = "humorous"  // 阿樂
+    case empathetic = "empathetic" // 阿澄
     
     var displayName: String {
         switch self {
         case .warm: return "温暖治愈"
         case .minimal: return "极简客观"
         case .humorous: return "幽默风趣"
+        case .empathetic: return "共情理解"
         }
     }
     
@@ -194,18 +197,18 @@ enum DiaryStyle: String, CaseIterable, Codable {
             return "请用简洁、客观、理性的语气。多关注事实描述，像一个专业的记录者，不要过多的修饰词。"
         case .humorous:
             return "请用幽默、风趣、轻松的语气。可以适度调侃，像一个有趣的朋友，让对话充满快乐。"
+        case .empathetic:
+            return "请用深度共情、理解、支持的语气。专注于理解用户的感受，给予情感上的认同和支持。"
         }
     }
     
-    /// B-016: 从 AIToneStyle 转换
+    /// B-016/B-029: 从 AIToneStyle 转换（1:1 映射）
     init(from toneStyle: AIToneStyle) {
         switch toneStyle {
-        case .warm, .empathetic:
-            self = .warm
-        case .minimal:
-            self = .minimal
-        case .humorous:
-            self = .humorous
+        case .warm: self = .warm
+        case .minimal: self = .minimal
+        case .humorous: self = .humorous
+        case .empathetic: self = .empathetic
         }
     }
 }
@@ -365,6 +368,7 @@ final class AIService: AIServiceProtocol {
             let media_type: String
             let user_context: String?
             let language: String?
+            let is_premium: Bool?  // B-027: 優先佇列標記
         }
         
         let userLanguage = SettingsManager.shared.appLanguage.rawValue
@@ -373,7 +377,8 @@ final class AIService: AIServiceProtocol {
             image_base64: base64Image,
             media_type: mediaType.rawValue,
             user_context: userContext,
-            language: userLanguage
+            language: userLanguage,
+            is_premium: IAPManager.shared.premiumStatus.isPremium
         )
         
         request.httpBody = try JSONEncoder().encode(analyzeRequest)
@@ -471,6 +476,7 @@ final class AIService: AIServiceProtocol {
             let environment_context: EnvironmentContextDTO?
             let style: String?
             let language: String?
+            let is_premium: Bool?  // B-027: 優先佇列標記
         }
         
         let chatMessages = messages.map { msg -> [String: String] in
@@ -484,7 +490,8 @@ final class AIService: AIServiceProtocol {
             analysis_context: analysisContext.map { AIAnalysisContextDTO(from: $0) },
             environment_context: environmentContext.map { EnvironmentContextDTO(from: $0) },
             style: style?.rawValue,
-            language: userLanguage
+            language: userLanguage,
+            is_premium: IAPManager.shared.premiumStatus.isPremium
         )
         
         // 5. 发送请求（B-020: 自动重试）
@@ -608,6 +615,7 @@ final class AIService: AIServiceProtocol {
             let style: String?
             let environment_context: EnvironmentContextDTO?
             let language: String?
+            let is_premium: Bool?  // B-027: 優先佇列標記
         }
         
         let chatMessages = messages.map { msg -> [String: String] in
@@ -620,7 +628,8 @@ final class AIService: AIServiceProtocol {
             analysis_context: analysisContext.map { AIAnalysisContextDTO(from: $0) },
             style: style?.rawValue,
             environment_context: environmentContext.map { EnvironmentContextDTO(from: $0) },
-            language: userLanguage
+            language: userLanguage,
+            is_premium: IAPManager.shared.premiumStatus.isPremium
         )
         
         // 5. 发送请求（B-020: 自动重试）
@@ -712,6 +721,7 @@ final class AIService: AIServiceProtocol {
             let style: String?
             let existing_tags: [String]?
             let language: String?
+            let is_premium: Bool?  // B-027: 優先佇列標記
         }
         
         let chatMessages = messages.map { msg -> [String: String] in
@@ -724,7 +734,8 @@ final class AIService: AIServiceProtocol {
             analysis_context: analysisContext.map { AIAnalysisContextDTO(from: $0) },
             style: style?.rawValue,
             existing_tags: existingTags.isEmpty ? nil : existingTags,
-            language: userLanguage
+            language: userLanguage,
+            is_premium: IAPManager.shared.premiumStatus.isPremium
         )
         
         // 5. 发送请求（B-020: 自动重试）

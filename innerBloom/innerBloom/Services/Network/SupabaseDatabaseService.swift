@@ -501,12 +501,35 @@ final class SupabaseDatabaseService {
             filteredResults = results.filter { filter.contains($0.id) }
         }
         
-        // 为每篇日记加载关联的 tagIds
+        // 为每篇日记加载关联的 tagIds（文字搜尋結果）
         var entries: [DiaryEntry] = []
+        var textMatchedIds: Set<UUID> = []
         for apiModel in filteredResults {
             let tagIds = try await getTagIds(for: apiModel.id)
-            let entry = apiModel.toDiaryEntry(tagIds: tagIds)
-            entries.append(entry)
+            entries.append(apiModel.toDiaryEntry(tagIds: tagIds))
+            textMatchedIds.insert(apiModel.id)
+        }
+        
+        // 依標籤名稱搜尋：找出名稱包含關鍵字的標籤，再取這些標籤下的日記（與文字結果合併，避免漏掉「只出現在標籤」的搜尋）
+        do {
+            let tagsMatchingName = try await getTags(nameContains: keyword)
+            var diaryIdsFromTags: Set<UUID> = []
+            for tag in tagsMatchingName {
+                let ids = try await getDiaryIds(for: tag.id)
+                diaryIdsFromTags.formUnion(ids)
+            }
+            if let filter = diaryIdFilter {
+                diaryIdsFromTags.formIntersection(filter)
+            }
+            let idsNotInTextResults = diaryIdsFromTags.subtracting(textMatchedIds)
+            if !idsNotInTextResults.isEmpty {
+                let byTagEntries = try await getDiaries(ids: Array(idsNotInTextResults))
+                entries.append(contentsOf: byTagEntries)
+                entries.sort { $0.createdAt > $1.createdAt }
+                entries = Array(entries.prefix(limit))
+            }
+        } catch {
+            print("[DatabaseService] Tag-name search fallback failed: \(error), text results only")
         }
         
         print("[DatabaseService] Search results: \(entries.count) diaries")
@@ -761,6 +784,44 @@ final class SupabaseDatabaseService {
         
         let results = try decoder.decode([TagAPIModel].self, from: data)
         return results.map { $0.toTag() }
+    }
+    
+    /// 依名稱關鍵字搜尋標籤（用於搜尋日記時一併依標籤名匹配）
+    /// B-019: RLS 自動過濾只回傳本人標籤
+    private func getTags(nameContains keyword: String) async throws -> [Tag] {
+        guard config.isConfigured, let restURL = config.restURL else {
+            return []
+        }
+        var components = URLComponents(url: restURL.appendingPathComponent("tags"), resolvingAgainstBaseURL: false)!
+        let pattern = "%\(keyword)%"
+        components.queryItems = [URLQueryItem(name: "name", value: "ilike.\(pattern)")]
+        let request = try await authenticatedRequest(url: components.url!)
+        let (data, _) = try await performRequest(request)
+        let results = try decoder.decode([TagAPIModel].self, from: data)
+        return results.map { $0.toTag() }
+    }
+    
+    /// 依日記 ID 列表取得日記（用於合併標籤搜尋結果）
+    private func getDiaries(ids: [UUID]) async throws -> [DiaryEntry] {
+        guard config.isConfigured, let restURL = config.restURL, !ids.isEmpty else {
+            return []
+        }
+        var components = URLComponents(url: restURL.appendingPathComponent("diaries"), resolvingAgainstBaseURL: false)!
+        let idsString = ids.map { $0.uuidString }.joined(separator: ",")
+        components.queryItems = [
+            URLQueryItem(name: "id", value: "in.(\(idsString))"),
+            URLQueryItem(name: "order", value: "created_at.desc"),
+            URLQueryItem(name: "is_saved", value: "eq.true")
+        ]
+        let request = try await authenticatedRequest(url: components.url!)
+        let (data, _) = try await performRequest(request)
+        let results = try decoder.decode([DiaryAPIModel].self, from: data)
+        var entries: [DiaryEntry] = []
+        for apiModel in results {
+            let tagIds = try await getTagIds(for: apiModel.id)
+            entries.append(apiModel.toDiaryEntry(tagIds: tagIds))
+        }
+        return entries
     }
     
     /// 保存日记标签关联
