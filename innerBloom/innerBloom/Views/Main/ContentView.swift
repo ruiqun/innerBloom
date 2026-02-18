@@ -28,8 +28,25 @@ struct ContentView: View {
     
     var body: some View {
         ZStack {
-            // 全局背景：几乎纯黑
-            Theme.background
+            // 全局背景：暖黑渐层 + 顶部聚光灯
+            ZStack {
+                Theme.warmBlackGradient
+                    .ignoresSafeArea()
+                
+                // 顶部聚光灯效果 (Royal Spotlight)
+                RadialGradient(
+                    gradient: Gradient(colors: [Theme.goldLight.opacity(0.08), Color.clear]),
+                    center: .top,
+                    startRadius: 0,
+                    endRadius: 600
+                )
+                .ignoresSafeArea()
+            }
+            
+            // 极轻微杂讯质感 (Optional)
+            Rectangle()
+                .fill(Color.white.opacity(0.02))
+                .blendMode(.overlay)
                 .ignoresSafeArea()
             
             // 内容区域（底部不保留安全區域，減少留白）

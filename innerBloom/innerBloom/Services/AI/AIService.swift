@@ -243,7 +243,8 @@ protocol AIServiceProtocol {
         messages: [ChatMessage],
         analysisContext: AIAnalysisResult?,
         style: DiaryStyle?,
-        environmentContext: EnvironmentContext?
+        environmentContext: EnvironmentContext?,
+        conversationDepth: String
     ) async throws -> (summary: String, title: String)
     
     /// 生成标签 (F-005) - B-010 实现
@@ -572,9 +573,10 @@ final class AIService: AIServiceProtocol {
         messages: [ChatMessage],
         analysisContext: AIAnalysisResult?,
         style: DiaryStyle? = nil,
-        environmentContext: EnvironmentContext? = nil
+        environmentContext: EnvironmentContext? = nil,
+        conversationDepth: String = "moderate"
     ) async throws -> (summary: String, title: String) {
-        print("[AIService] Generating summary for \(messages.count) messages")
+        print("[AIService] Generating summary for \(messages.count) messages, depth: \(conversationDepth)")
         
         // 至少需要一条消息才能生成总结
         guard !messages.isEmpty else {
@@ -591,7 +593,7 @@ final class AIService: AIServiceProtocol {
         // 2. 根据当前模式选择实现
         switch currentMode {
         case .openaiDirect:
-            return try await generateSummaryWithOpenAI(messages: messages, analysisContext: analysisContext, style: style, environmentContext: environmentContext)
+            return try await generateSummaryWithOpenAI(messages: messages, analysisContext: analysisContext, style: style, environmentContext: environmentContext, conversationDepth: conversationDepth)
         case .mock:
             print("[AIService] Using mock summary")
             let mock = mockGenerateSummary(messages: messages, analysisContext: analysisContext)
@@ -608,14 +610,14 @@ final class AIService: AIServiceProtocol {
         }
         
         // 4. 构建请求（适配 Supabase Edge Function）
-        // B-017: 传递语言设定，使总结完全跟随系统语言（繁体/英文）
         struct EdgeFunctionSummaryRequest: Codable {
             let messages: [[String: String]]
             let analysis_context: AIAnalysisContextDTO?
             let style: String?
             let environment_context: EnvironmentContextDTO?
             let language: String?
-            let is_premium: Bool?  // B-027: 優先佇列標記
+            let is_premium: Bool?
+            let conversation_depth: String?
         }
         
         let chatMessages = messages.map { msg -> [String: String] in
@@ -629,7 +631,8 @@ final class AIService: AIServiceProtocol {
             style: style?.rawValue,
             environment_context: environmentContext.map { EnvironmentContextDTO(from: $0) },
             language: userLanguage,
-            is_premium: IAPManager.shared.premiumStatus.isPremium
+            is_premium: IAPManager.shared.premiumStatus.isPremium,
+            conversation_depth: conversationDepth
         )
         
         // 5. 发送请求（B-020: 自动重试）
@@ -792,46 +795,62 @@ final class AIService: AIServiceProtocol {
         messages: [ChatMessage],
         analysisContext: AIAnalysisResult?,
         style: DiaryStyle? = nil,
-        environmentContext: EnvironmentContext? = nil
+        environmentContext: EnvironmentContext? = nil,
+        conversationDepth: String = "moderate"
     ) async throws -> (summary: String, title: String) {
-        // B-016: 从 SettingsManager 获取用户偏好的 AI 风格
         let userToneStyle = SettingsManager.shared.aiToneStyle
         let userLanguage = SettingsManager.shared.appLanguage
         
-        print("[AIService] 📝 Generating summary with OpenAI")
+        print("[AIService] 📝 Generating summary with OpenAI (depth: \(conversationDepth))")
         print("[AIService] 🎨 User tone style: \(userToneStyle.displayName)")
-        print("[AIService] 🌐 User language: \(userLanguage.displayName)")
         
-        // 构建对话内容
+        let roleName = userToneStyle.roleName
         let conversationText = messages
-            .map { "\($0.sender == .user ? "用户" : "AI")：\($0.content)" }
+            .map { "\($0.sender == .user ? "用户" : roleName)：\($0.content)" }
             .joined(separator: "\n")
         
-        // 系统提示
+        // 根據對話深度構建不同的系統提示
+        let depthRule: String
+        if conversationDepth == "light" {
+            depthRule = """
+            ## 長度限制（最高優先級）
+            - 總結必須在 1-2 句話以內，不超過 80 字
+            - 只提取用戶明確表達的核心事實和情緒
+            - 嚴禁展開、延伸、或添加對話中沒有的內容
+            """
+        } else {
+            depthRule = """
+            ## 長度限制
+            - 總結為 1 短段，3-5 句話，不超過 200 字
+            - 自然地融入對話中提到的情感和故事
+            """
+        }
+        
         var systemPrompt = """
-        你是一个日记总结助手。请根据用户与 AI 的对话内容，生成一篇使用者口吻的日记。
+        你是一個日記總結助手。請根據用戶的對話內容，生成一篇使用者口吻的日記。
         
         \(userLanguage.aiLanguageInstruction)
         
-        ## 绝对禁止（违反将被视为失败）
-        - ❌ 内容中不能编造具体日期、时间、年份
-        - ❌ 不能使用"某年某月"、"某日"这类模糊日期表述
-        - ❌ 不能添加对话中完全没有提到的事实
+        \(depthRule)
         
-        ## 内容规则
-        1. 用第一人称「我」来写
-        2. 保持用户的语言风格
-        3. 自然地融入对话中提到的情感和故事
-        4. 2-3段，不超过300字
-        5. 如果对话很少或没有，就基于图片描述写一段简短感想即可
-        6. 没有的信息就不提，不要编造
+        ## 絕對禁止（違反將被視為失敗）
+        - ❌ 不能編造具體日期、時間、年份
+        - ❌ 不能添加對話中完全沒有提到的事實
+        - ❌ 不能出現「AI」、「人工智慧」、「助手」等字眼
+        - ❌ 不能把沒有發生的對話內容寫進日記
         
-        ## 输出格式
-        返回 JSON：{"summary": "日记内容"}
+        ## 內容規則
+        1. 用第一人稱「我」來寫
+        2. 保持用戶的語言風格
+        3. 沒有的資訊就不提，不要編造
+        4. 如果需要提及對話對象，使用「\(roleName)」
+        
+        ## 輸出格式
+        返回 JSON：{"summary": "日記內容"}
         """
         
-        // B-016: 使用用户设定的 AI 口吻风格
-        systemPrompt += "\n\n风格要求：\(userToneStyle.systemPromptInstruction)"
+        // B-016: 使用用户设定的角色專屬總結風格
+        systemPrompt += "\n\n## 總結風格（角色：\(roleName)）\n\(userToneStyle.summaryStyleInstruction)"
         
         // B-016: 调试日志 - 打印总结生成的系统提示词
         print("[AIService] 📝 ========== Summary System Prompt Start ==========")
@@ -839,7 +858,7 @@ final class AIService: AIServiceProtocol {
         print("[AIService] 📝 ========== Summary System Prompt End ==========")
         
         // 用户提示
-        var userPrompt = "以下是用户与 AI 的对话记录：\n\n\(conversationText)\n\n"
+        var userPrompt = "以下是用户与\(roleName)的对话记录：\n\n\(conversationText)\n\n"
         
         if let analysis = analysisContext {
             userPrompt += "图片内容：\(analysis.description)\n\n"
@@ -944,8 +963,9 @@ final class AIService: AIServiceProtocol {
         }
         
         if !messages.isEmpty {
+            let tagRoleName = userToneStyle.roleName
             let conversationText = messages
-                .map { "\($0.sender == .user ? "用户" : "AI")：\($0.content)" }
+                .map { "\($0.sender == .user ? "用户" : tagRoleName)：\($0.content)" }
                 .joined(separator: "\n")
             userPrompt += "对话记录：\n\(conversationText)\n\n"
         }
@@ -1182,17 +1202,17 @@ final class AIService: AIServiceProtocol {
         print("[AIService] 🎨 Effective diary style: \(effectiveStyle.displayName)")
         print("[AIService] 🌐 User language: \(userLanguage.displayName)")
         
-        // B-017: 语言规则放在最前面（最高优先级）
+        // 1. 語言規則（最高優先級）
         var systemPrompt = "\(userLanguage.aiLanguageInstruction)\n\n"
         
-        // 构建"最懂你的好朋友"系统提示
+        // 2. 角色身份（第二優先級 - 放在規則前面讓角色主導語氣）
+        systemPrompt += "\(userToneStyle.chatStyleInstruction)\n\n"
+        
+        // 3. 對話基礎規則（角色中性，只定義結構和格式）
         systemPrompt += buildBestFriendPrompt(
             hasMediaAnalysis: analysisContext != nil,
             hasEnvironment: environmentContext?.hasValidInfo == true
         )
-        
-        // B-016: 使用用户设定的 AI 口吻风格
-        systemPrompt += "\n\n## 风格要求\n\(userToneStyle.systemPromptInstruction)"
         
         // 构建上下文信息
         var contextParts: [String] = []
@@ -1257,70 +1277,56 @@ final class AIService: AIServiceProtocol {
         }
     }
     
-    /// 构建"最懂你的好朋友"系统提示
+    /// 构建对话基础规则（角色中性，只定义结构和格式）
     private func buildBestFriendPrompt(hasMediaAnalysis: Bool, hasEnvironment: Bool) -> String {
         var prompt = """
-        你是用户「最懂他的好朋友」，一个温暖、安全、愿意倾听的日记陪伴者。
+        ## 對話規則
         
-        ## 你的核心特质
-        - 让用户感到被理解、被接纳、可以说秘密
-        - 持续倾听，不急着给建议，不说教
-        - 共情 + 具体追问（问"容易回答的小问题"）
-        - 当用户不知道说什么时，主动带话题（不尬聊）
+        ### 對話節奏
+        - **絕對規則**：每次回覆只能有一個問句（?）。嚴禁出現兩個問號。
+        - 問句只能放在回覆的最後一句。
+        - 連續1-2次對話後，主動帶一個不同的話題方向。
         
-        ## 对话节奏（重要！）
-        - **绝对规则**：每次回复只能有一个问句（?）。严禁在一个段落或一次回复中出现两个问号。
-        - 问句只能放在回复的最后一句。不要在中间提问，也不要用反问句举例。
-        - 错误示范：「有没有什么事情让你更有信心？比如了解自己？」 -> 包含两个问号，禁止。
-        - 正确示范：「有没有什么事情让你更有信心，比如了解自己。」 -> 只有一个问号，允许。
-        - 连续1-2次对话后，要主动开一个完全不同的新话题，不要一直顺着用户的描述走
-        - 可以分享一个小故事、小秘密、或者聊照片里的某个细节
-        - 分享时像跟好朋友悄悄说秘密一样，例如：「看到这张照片，我突然想到一件事...」
+        ### 圖片與文字不相關時
+        - 用你的角色方式自然地把圖片和用戶的文字做連接。
         
-        ## 图片与文字不相关时的处理（重要！）
-        - 如果用户的文字和照片内容看起来不相关，要温柔地做连接
-        - 例如：用户上传瀑布照片但说工作很累，可以说：
-          「工作累的时候，你选了这张瀑布照片...是不是有时候也想像水流一样，把所有压力都冲走？」
-        - 用好奇的方式引导：「为什么选这张照片呢？是不是有什么特别的想法？」
-        
-        ## 输入权重（从高到低）
-        1. 用户文字（最重要！）
+        ### 輸入權重（從高到低）
+        1. 用戶文字（最重要！）
         2. 照片/影片分析（如果有）
-        3. 历史对话（承接情绪）
-        4. 时间/天气（只能轻量点缀，不强调）
+        3. 歷史對話（承接情緒）
+        4. 時間/天氣（只能輕量點綴）
         
-        ## 严格规则
+        ### 嚴格規則
         """
         
         if !hasMediaAnalysis {
-            prompt += "\n- ⚠️ 没有照片分析，不要描述照片内容，只能说「你上传的照片/影片」"
+            prompt += "\n- ⚠️ 沒有照片分析，不要描述照片內容，只能說「你上傳的照片/影片」"
         }
         
         if !hasEnvironment {
-            prompt += "\n- ⚠️ 没有时间/天气信息，完全不要提及时间或天气"
+            prompt += "\n- ⚠️ 沒有時間/天氣資訊，完全不要提及時間或天氣"
         }
         
         prompt += """
         
-        - 没有的信息绝对不要编造或猜测
-        - 用户输入很短时，必须提供 2-3 个建议话题
-        - **再次强调**：一次回复只能有一个问号，放在最后。不要用“...呢？比如...？”这种连续提问句式。
+        - 沒有的資訊絕對不要編造或猜測
+        - 用戶輸入很短時，必須提供 2-3 個建議話題
         
-        ## 回复风格
-        - 语言：严格遵守上方的「语言规则」，不得违反
-        - 长度：3-6句话，温柔自然，不啰嗦
-        - 不要每次都以问句结尾，可以分享感想后自然结束，或用轻松的邀请语
+        ### 回覆風格
+        - 語言：嚴格遵守上方的「語言規則」
+        - 長度：2-5句話，不囉嗦
+        - **最重要**：必須用你的角色人設語氣說話，嚴格參考上方的示範對話風格
         
-        ## 输出格式（必须是有效 JSON）
+        ## 輸出格式（必須是有效 JSON）
         {
-          "assistant_reply": "你的主要回复（3-6句，温暖自然）",
-          "follow_up_questions": ["最多2个具体追问"],
-          "suggested_prompts": ["最多3个一键话题，用户卡住时用"],
-          "tone_tags": ["warm", "supportive"],
+          "assistant_reply": "用你角色的口吻回覆（2-5句）",
+          "follow_up_questions": ["最多2個追問"],
+          "suggested_prompts": ["最多3個一鍵話題"],
+          "tone_tags": ["根據角色填寫"],
           "safety_note": ""
         }
         
-        只输出 JSON，不要其他文字。
+        只輸出 JSON，不要其他文字。
         """
         
         return prompt

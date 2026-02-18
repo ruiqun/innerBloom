@@ -302,10 +302,25 @@ final class HomeViewModel {
     
     // MARK: - 详情页操作 (S-002)
     
-    /// 进入日记详情
+    /// 进入日记详情（異步載入完整資料含 messages）
     func showDiaryDetail(_ entry: DiaryEntry) {
         print("[HomeViewModel] Show detail for diary: \(entry.id)")
+        // 先用列表中的 entry 快速展示（Optimistic UI）
         selectedDiary = entry
+        // 異步載入完整資料（含 messages）
+        Task {
+            do {
+                let fullEntry = try await SupabaseDatabaseService.shared.getDiary(id: entry.id)
+                await MainActor.run {
+                    if self.selectedDiary?.id == entry.id {
+                        self.selectedDiary = fullEntry
+                        print("[HomeViewModel] Detail loaded with \(fullEntry.messages.count) messages")
+                    }
+                }
+            } catch {
+                print("[HomeViewModel] Failed to load full diary detail: \(error)")
+            }
+        }
     }
     
     /// 关闭日记详情
@@ -870,22 +885,74 @@ final class HomeViewModel {
         if !messages.isEmpty {
             await updateEntryInListAsync(draftId) { $0.markAIGenerating() }
             
-            // 生成总结（不生成标题）
-            do {
-                let result = try await aiService.generateSummary(
-                    messages: messages,
-                    analysisContext: analysis,
-                    style: style,
-                    environmentContext: environment
-                )
-                draft.diarySummary = result.summary
-                draft.title = nil  // 不生成/显示标题
+            // 計算對話深度：用戶消息數量和總字數
+            let userMessages = messages.filter { $0.sender == .user }
+            let userMessageCount = userMessages.count
+            let totalUserChars = userMessages.reduce(0) { $0 + $1.content.count }
+            
+            // 語義檢測：判斷用戶輸入是否有實質內容
+            let hasMeaningfulInput = userMessages.contains { msg in
+                let text = msg.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                if text.count < 2 { return false }
+                // 排除純數字、純符號、純標點
+                let stripped = text.filter { !$0.isNumber && !$0.isPunctuation && !$0.isSymbol && !$0.isWhitespace }
+                return stripped.count >= 2
+            }
+            
+            if userMessageCount == 0 || !hasMeaningfulInput {
+                // Tier 0：無用戶消息 或 輸入無實質內容，前端攔截不呼叫 AI
+                let photoDesc = analysis?.description ?? ""
+                let placeholders = [
+                    "今天記錄了一個瞬間。",
+                    "留下了一張照片，等待下次再來聊聊。",
+                    "拍了一張照片，心情尚未展開。",
+                    "一張照片，一段未完的故事。"
+                ]
+                let placeholder = placeholders.randomElement() ?? placeholders[0]
+                
+                if !photoDesc.isEmpty {
+                    // 有圖片描述：佔位文案 + 簡化的圖片描述
+                    // 取圖片描述的第一句（句號或逗號前）作為簡化版
+                    let shortDesc = photoDesc
+                        .components(separatedBy: CharacterSet(charactersIn: "。，.,"))
+                        .first?
+                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? photoDesc
+                    draft.diarySummary = "\(placeholder)\(shortDesc.hasSuffix("。") ? shortDesc : shortDesc + "。")"
+                } else {
+                    draft.diarySummary = placeholder
+                }
+                draft.title = nil
                 draft.style = style.rawValue
                 draft.isSummarized = true
-                print("[HomeViewModel] ✅ Summary generated")
-            } catch {
-                print("[HomeViewModel] ⚠️ Summary generation failed: \(error)")
-                // 继续流程，不阻断
+                print("[HomeViewModel] ✅ Tier 0: No meaningful input (userMsgs=\(userMessageCount), meaningful=\(hasMeaningfulInput)), using placeholder")
+            } else {
+                // Tier 1 或 Tier 2：根據對話深度決定
+                let conversationDepth: String
+                if userMessageCount <= 3 && totalUserChars < 50 {
+                    conversationDepth = "light"
+                    print("[HomeViewModel] 📊 Tier 1 (light): \(userMessageCount) messages, \(totalUserChars) chars")
+                } else {
+                    conversationDepth = "moderate"
+                    print("[HomeViewModel] 📊 Tier 2 (moderate): \(userMessageCount) messages, \(totalUserChars) chars")
+                }
+                
+                // 生成总结（不生成标题）
+                do {
+                    let result = try await aiService.generateSummary(
+                        messages: messages,
+                        analysisContext: analysis,
+                        style: style,
+                        environmentContext: environment,
+                        conversationDepth: conversationDepth
+                    )
+                    draft.diarySummary = result.summary
+                    draft.title = nil
+                    draft.style = style.rawValue
+                    draft.isSummarized = true
+                    print("[HomeViewModel] ✅ Summary generated (depth: \(conversationDepth))")
+                } catch {
+                    print("[HomeViewModel] ⚠️ Summary generation failed: \(error)")
+                }
             }
             
             // 生成标签

@@ -114,15 +114,16 @@ struct InputAreaView: View {
             }
         }) {
             ZStack {
-                // 外圈 - 简洁设计，无边框
+                // 外圈 - 极简线条
                 Circle()
-                    .fill(isRecording ? Color.red.opacity(0.15) : Theme.accent.opacity(0.1))
+                    .stroke(isRecording ? Color.red.opacity(0.5) : Theme.textSecondary.opacity(0.3), lineWidth: 1)
+                    .background(Circle().fill(Color.black.opacity(0.2))) // 深色底增强对比
                     .frame(width: 48, height: 48)
                 
-                // 图标
+                // 图标 - 线性风格 (Thin stroke)
                 Image(systemName: isRecording ? "stop.fill" : "mic")
-                    .font(.system(size: 20))
-                    .foregroundColor(isRecording ? .red : Theme.accent)
+                    .font(.system(size: 20, weight: .light)) // Thin/Light weight
+                    .foregroundColor(isRecording ? .red : Theme.textSecondary)
             }
         }
         .buttonStyle(.plain)
@@ -138,15 +139,15 @@ struct InputAreaView: View {
         TextField("", text: $inputText, axis: .vertical)
             .placeholder(when: inputText.isEmpty && !isRecording) {
                 Text(String.localized(.shareYourMood))
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(Theme.textSecondary.opacity(0.5))
+                    .font(Theme.royalFont(size: 14, weight: .regular)) // Serif 字体
+                    .foregroundColor(Theme.textSecondary.opacity(0.4)) // 低对比度 Placeholder
             }
             .placeholder(when: inputText.isEmpty && isRecording) {
                 Text(String.localized(.listening))
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 14, weight: .regular))
                     .foregroundColor(Color.red.opacity(0.6))
             }
-            .font(.system(size: 14, weight: .semibold))
+            .font(.system(size: 14, weight: .regular))
             .textFieldStyle(.plain)
             .foregroundColor(Theme.textPrimary)
             .focused($isTextFieldFocused)
@@ -155,15 +156,17 @@ struct InputAreaView: View {
             .padding(.vertical, 12)
             .background(
                 RoundedRectangle(cornerRadius: 20)
-                    .fill(Theme.glassMaterial)
+                    .fill(Color.black.opacity(0.3)) // 深色玻璃卡片感
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
                     .overlay(
                         RoundedRectangle(cornerRadius: 20)
-                            .stroke(
-                                isTextFieldFocused ? Theme.accent.opacity(0.5) :
-                                    (isRecording ? Color.red.opacity(0.3) : Color.white.opacity(0.1)),
-                                lineWidth: isTextFieldFocused ? 1.5 : (isRecording ? 1 : 0.5)
+                            .strokeBorder(
+                                isTextFieldFocused ? Theme.goldLinearGradient : // 聚焦时金色渐变描边
+                                    LinearGradient(colors: [Theme.textSecondary.opacity(0.2)], startPoint: .top, endPoint: .bottom),
+                                lineWidth: isTextFieldFocused ? 1 : 0.5
                             )
                     )
+                    .shadow(color: isTextFieldFocused ? Theme.accent.opacity(0.2) : Color.clear, radius: 8) // 聚焦微光
             )
             .disabled(isRecording) // 录音时禁用手动输入
             .onSubmit {
@@ -182,18 +185,20 @@ struct InputAreaView: View {
             onSend?()
         }) {
             ZStack {
+                // 线性风格
                 Circle()
-                    .fill(canSend ? Theme.accent : Color.white.opacity(0.05))
+                    .stroke(canSend ? Theme.accent : Theme.textSecondary.opacity(0.2), lineWidth: 1)
+                    .background(Circle().fill(canSend ? Theme.accent.opacity(0.1) : Color.clear))
                     .frame(width: 40, height: 40)
                 
                 if isSending {
                     ProgressView()
                         .scaleEffect(0.8)
-                        .tint(canSend ? Color(red: 0.08, green: 0.07, blue: 0.04) : Theme.textSecondary)
+                        .tint(Theme.accent)
                 } else {
                     Image(systemName: "arrow.up")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(canSend ? Color(red: 0.08, green: 0.07, blue: 0.04) : Theme.textSecondary.opacity(0.5))
+                        .font(.system(size: 16, weight: .light)) // Thin weight
+                        .foregroundColor(canSend ? Theme.accent : Theme.textSecondary.opacity(0.3))
                 }
             }
         }

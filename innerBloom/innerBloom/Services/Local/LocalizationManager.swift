@@ -374,8 +374,8 @@ enum L10nKey: String, CaseIterable {
         case .conversation: return "對話"
         case .saveMemory: return "儲存回憶"
         case .generatingTitle: return "正在生成標題..."
-        case .generatingSummary: return "AI 正在為你生成日記摘要..."
-        case .aiGenerating: return "AI 生成中..."
+        case .generatingSummary: return "正在為你書寫日記..."
+        case .aiGenerating: return "正在為你書寫日記..."
         case .uploading: return "上傳中..."
         case .saving: return "儲存中..."
         case .noContent: return "無內容"
@@ -405,8 +405,8 @@ enum L10nKey: String, CaseIterable {
         case .reply: return "回覆..."
         case .reviewConversation: return "回顧對話"
         case .conversationRecords: return "%d 條對話記錄"
-        case .aiGeneratedTags: return "AI 生成的標籤"
-        case .aiViewOfImage: return "AI 眼中的畫面"
+        case .aiGeneratedTags: return "自動生成的標籤"
+        case .aiViewOfImage: return "照片中的畫面"
             
         // 日记详情
         case .deleteDiary: return "刪除日記"
@@ -632,8 +632,8 @@ enum L10nKey: String, CaseIterable {
         case .conversation: return "Chat"
         case .saveMemory: return "Save Memory"
         case .generatingTitle: return "Generating title..."
-        case .generatingSummary: return "AI is generating your diary summary..."
-        case .aiGenerating: return "AI Generating..."
+        case .generatingSummary: return "Writing your diary..."
+        case .aiGenerating: return "Writing your diary..."
         case .uploading: return "Uploading..."
         case .saving: return "Saving..."
         case .noContent: return "No content"
@@ -663,8 +663,8 @@ enum L10nKey: String, CaseIterable {
         case .reply: return "Reply..."
         case .reviewConversation: return "Review Conversation"
         case .conversationRecords: return "%d messages"
-        case .aiGeneratedTags: return "AI Generated Tags"
-        case .aiViewOfImage: return "AI's View"
+        case .aiGeneratedTags: return "Auto Generated Tags"
+        case .aiViewOfImage: return "What's in the Photo"
             
         // Diary detail
         case .deleteDiary: return "Delete Diary"

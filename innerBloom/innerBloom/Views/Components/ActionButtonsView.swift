@@ -21,12 +21,16 @@ struct ActionButtonsView: View {
             // 返回按钮 (chevron.left 图标)
             Button(action: onBack) {
                 Image(systemName: "chevron.left")
-                    .font(.system(size: 18, weight: .medium))
+                    .font(.system(size: 18, weight: .light)) // Thin/Light weight
                     .foregroundColor(Theme.textSecondary)
                     .frame(width: 44, height: 44)
                     .background(
                         Circle()
-                            .fill(Color.white.opacity(0.08))
+                            .fill(Color.white.opacity(0.05))
+                    )
+                    .overlay(
+                        Circle()
+                            .stroke(Theme.textSecondary.opacity(0.2), lineWidth: 0.5) // 极细描边
                     )
             }
             .buttonStyle(.plain)
@@ -34,31 +38,44 @@ struct ActionButtonsView: View {
             
             Spacer()
             
-            // Save Memory 按钮 (强调色胶囊按钮)
+            // Save Memory 按钮 (Royal Minimal: 仅描边 + 小点缀)
             // B-017: 多语言支持
             Button(action: onSaveMemory) {
                 HStack(spacing: 8) {
                     if isSaving {
                         ProgressView()
                             .scaleEffect(0.8)
-                            .tint(Color(red: 0.08, green: 0.07, blue: 0.04))
+                            .tint(Theme.accent)
                     } else {
-                        Image(systemName: "heart.fill")
-                            .font(.system(size: 14, weight: .medium))
+                        // 线性图标
+                        Image(systemName: "heart") // 使用线性图标
+                            .font(.system(size: 14, weight: .light))
                         Text(String.localized(.saveMemory))
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(Theme.royalFont(size: 14, weight: .medium)) // Serif 字体
                     }
                 }
-                .foregroundColor(canSave ? Color(red: 0.08, green: 0.07, blue: 0.04) : Theme.textSecondary.opacity(0.5))
+                .foregroundColor(canSave ? Theme.accent : Theme.textSecondary.opacity(0.5))
                 .padding(.horizontal, 20)
                 .padding(.vertical, 12)
                 .background(
                     Capsule()
-                        .fill(canSave ? Theme.accent : Color.white.opacity(0.08))
+                        .fill(canSave ? Theme.accent.opacity(0.1) : Color.white.opacity(0.05)) // 极淡的金色填充
                 )
                 .overlay(
                     Capsule()
-                        .stroke(canSave ? Theme.accent.opacity(0.5) : Color.white.opacity(0.1), lineWidth: 1)
+                        .strokeBorder(
+                            canSave ? Theme.goldLinearGradient : LinearGradient(colors: [Color.white.opacity(0.1)], startPoint: .top, endPoint: .bottom),
+                            lineWidth: 1
+                        ) // 金色渐变描边
+                )
+                // 金色小点缀（右上角光点）
+                .overlay(
+                    Circle()
+                        .fill(Theme.accent)
+                        .frame(width: 4, height: 4)
+                        .offset(x: 4, y: -4)
+                        .opacity(canSave ? 1 : 0),
+                    alignment: .topTrailing
                 )
             }
             .buttonStyle(.plain)
