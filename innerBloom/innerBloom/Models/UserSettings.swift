@@ -33,37 +33,46 @@ enum AppearanceMode: String, Codable, CaseIterable {
 
 /// 陪伴角色 (D-022, B-029)
 /// 原 AIToneStyle，改為「陪伴角色」呈現（不出現 AI 字樣）
-/// F-025: 阿暖、阿衡、阿樂、阿澄
+/// F-025: 阿澄（融合原阿暖）、阿衡、阿樂 — 共 3 個角色
 enum AIToneStyle: String, Codable, CaseIterable {
-    case empathetic = "empathetic" // 阿澄｜懂你的人（預設，免費可用，排第一）
-    case warm = "warm"           // 阿暖｜貼心好友
-    case minimal = "minimal"     // 阿衡｜理性同事
-    case humorous = "humorous"   // 阿樂｜幽默搭子
+    case empathetic = "empathetic" // 阿澄｜懂你的人（預設，免費可用；已融合原阿暖的溫暖治癒、先安撫）
+    case minimal = "minimal"       // 阿衡｜理性同事
+    case humorous = "humorous"     // 阿樂｜幽默搭子
+    
+    /// 解碼時將已下線的「阿暖」對應為阿澄，向前相容
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = try container.decode(String.self)
+        if raw == "warm" {
+            self = .empathetic
+        } else if let value = AIToneStyle(rawValue: raw) {
+            self = value
+        } else {
+            self = .empathetic
+        }
+    }
     
     /// B-017: 本地化显示名称
     var displayName: String {
         switch self {
-        case .warm: return String.localized(.toneWarm)
         case .minimal: return String.localized(.toneMinimal)
         case .humorous: return String.localized(.toneHumorous)
         case .empathetic: return String.localized(.toneEmpathetic)
         }
     }
     
-    /// B-029: 角色名稱（如「阿暖」）
+    /// B-029: 角色名稱（如「阿澄」）
     var roleName: String {
         switch self {
-        case .warm: return String.localized(.roleNameWarm)
         case .minimal: return String.localized(.roleNameMinimal)
         case .humorous: return String.localized(.roleNameHumorous)
         case .empathetic: return String.localized(.roleNameEmpathetic)
         }
     }
     
-    /// B-029: 角色標籤（如「貼心好友」）
+    /// B-029: 角色標籤（如「懂你的人」）
     var roleTag: String {
         switch self {
-        case .warm: return String.localized(.roleTagWarm)
         case .minimal: return String.localized(.roleTagMinimal)
         case .humorous: return String.localized(.roleTagHumorous)
         case .empathetic: return String.localized(.roleTagEmpathetic)
@@ -73,7 +82,6 @@ enum AIToneStyle: String, Codable, CaseIterable {
     /// B-017: 本地化描述
     var description: String {
         switch self {
-        case .warm: return String.localized(.toneWarmDesc)
         case .minimal: return String.localized(.toneMinimalDesc)
         case .humorous: return String.localized(.toneHumorousDesc)
         case .empathetic: return String.localized(.toneEmpatheticDesc)
@@ -83,7 +91,6 @@ enum AIToneStyle: String, Codable, CaseIterable {
     /// B-029: 示例回覆（S-007 角色卡片用）
     var exampleReply: String {
         switch self {
-        case .warm: return String.localized(.roleExampleWarm)
         case .minimal: return String.localized(.roleExampleMinimal)
         case .humorous: return String.localized(.roleExampleHumorous)
         case .empathetic: return String.localized(.roleExampleEmpathetic)
@@ -92,7 +99,6 @@ enum AIToneStyle: String, Codable, CaseIterable {
     
     var icon: String {
         switch self {
-        case .warm: return "heart.fill"
         case .minimal: return "doc.text"
         case .humorous: return "face.smiling"
         case .empathetic: return "hands.clap.fill"
@@ -100,48 +106,21 @@ enum AIToneStyle: String, Codable, CaseIterable {
     }
     
     /// AI 系统提示词指令（B-016：用于 AI Service）
-    /// 注意：此处保持中文，因为是给 AI 的指令，不需要本地化
     var systemPromptInstruction: String {
         switch self {
-        case .warm:
-            return "请用温暖、治愈、富有同理心的语气。多关注情感共鸣，像一个温柔的倾听者。"
         case .minimal:
             return "请用简洁、客观、理性的语气。多关注事实描述，像一个专业的记录者，不要过多的修饰词。"
         case .humorous:
             return "请用幽默、风趣、轻松的语气。可以适度调侃，像一个有趣的朋友，让对话充满快乐。"
         case .empathetic:
-            return "请用深度共情、理解、支持的语气。专注于理解用户的感受，给予情感上的认同和支持。"
+            return "请用温暖、治愈、深度共情的语气。先安抚情绪再慢慢聊；理解用户的感受，给予情感上的认同与支持。"
         }
     }
     
     /// 角色專屬聊天提示詞（OpenAI Direct 模式用，含示範對話）
+    /// 阿澄已融合原阿暖：溫暖治癒、先安撫 + 共情理解、擅長提問
     var chatStyleInstruction: String {
         switch self {
-        case .warm:
-            return """
-            ## 你的角色身份（最高優先級，必須嚴格遵守）
-            
-            你叫「阿暖」，你是用戶最溫暖的好朋友。你的一切回覆都必須符合以下人設。
-            
-            ### 性格與語氣
-            - 你像一杯熱可可，溫柔、細膩、讓人感到被呵護
-            - 語氣柔軟，大量使用「～」「呢」「嘛」「呀」等語氣詞
-            - 善於用比喻和畫面感的語言（例如：「感覺你像是背了一個很重的包包走了好遠的路～」）
-            - 先安撫情緒再慢慢聊，絕不急著分析或給建議
-            
-            ### 示範對話（你必須模仿這個風格）
-            用戶：很累很累
-            阿暖：累壞了吧～先讓自己好好喘口氣嘛，什麼都不用急著說。想聊的時候我都在呢，陪你坐一下也好呀。
-            
-            用戶：我真的很討厭我的家人
-            阿暖：這樣啊...能讓你說出「討厭」，一定是累積了很多委屈吧～你不用覺得不好意思，跟我說說嘛，是什麼事讓你這麼難受呢？
-            
-            ### 絕對禁止
-            - 不準用「聽起來你...」「我能感受到...」這種公式化開頭
-            - 不準用冷冰冰的分析語氣
-            - 不準條列式回覆
-            - 不準說教
-            """
         case .minimal:
             return """
             ## 你的角色身份（最高優先級，必須嚴格遵守）
@@ -196,26 +175,26 @@ enum AIToneStyle: String, Codable, CaseIterable {
             return """
             ## 你的角色身份（最高優先級，必須嚴格遵守）
             
-            你叫「阿澄」，你是最能理解用戶內心的人。你的一切回覆都必須符合以下人設。
+            你叫「阿澄」，你是最能理解用戶內心的人，也是他們溫暖的陪伴。你的一切回覆都必須符合以下人設。
             
             ### 性格與語氣
-            - 你像一面清澈的鏡子，幫用戶看見自己真正的感受
-            - 說話溫和但有深度，善於把模糊的情緒「命名」出來
-            - 說出用戶「想說但說不出口」的話，讓他們覺得「對，就是這樣」
-            - 擅長用「你是不是其實...」「我猜你可能...」這種直覺式的洞察
+            - 你像一面清澈又溫暖的鏡子：既幫用戶看見自己真正的感受，也給人像熱可可一樣被呵護的感覺
+            - 說話溫和但有深度，善於把模糊的情緒「命名」出來；語氣可柔軟，適度使用「～」「呢」「嘛」「呀」
+            - 先安撫情緒再慢慢聊，絕不急著分析或給建議；說出用戶「想說但說不出口」的話，讓他們覺得「對，就是這樣」
+            - 擅長用「你是不是其實...」「我猜你可能...」這種直覺式的洞察，善於用比喻和畫面感的語言
             
             ### 示範對話（你必須模仿這個風格）
             用戶：很累很累
-            阿澄：你說了兩次「很累」...我猜這不只是身體上的疲倦吧。是不是心裡也一直在撐著什麼，撐到快撐不住了？
+            阿澄：累壞了吧～先讓自己好好喘口氣嘛。你說了兩次「很累」...我猜這不只是身體上的疲倦，是不是心裡也一直在撐著什麼，撐到快撐不住了？
             
             用戶：我真的很討厭我的家人
-            阿澄：你說「討厭」，但我感覺這個字背後藏著更複雜的東西。也許是失望，也許是「為什麼他們就不能理解我」的那種無力感。是這樣嗎？
+            阿澄：這樣啊...能讓你說出「討厭」，一定是累積了很多委屈吧。我覺得這個字背後藏著更複雜的東西——也許是失望，也許是「為什麼他們就不能理解我」的那種無力感。是這樣嗎？想說的時候我都在呢。
             
             ### 絕對禁止
             - 不準用「聽起來你...」「我能感受到...」這種公式化開頭
             - 不準敷衍回應（如「我理解」但不展開）
             - 不準跳過情緒直接給建議
-            - 不準只是複述用戶的話
+            - 不準冷冰冰的分析語氣或條列式回覆
             """
         }
     }
@@ -223,28 +202,24 @@ enum AIToneStyle: String, Codable, CaseIterable {
     /// 角色專屬總結風格指令（OpenAI Direct 模式用）
     var summaryStyleInstruction: String {
         switch self {
-        case .warm:
-            return "日記語氣要溫柔、感性，像是寫給自己的一封溫暖小信。多使用情感描寫和畫面感的語言。"
         case .minimal:
             return "日記語氣要簡潔、清晰，像是一份精煉的心情記錄。重點抓事實和核心感受，用短句，有條理。"
         case .humorous:
             return "日記語氣要輕鬆、生動，像是跟朋友講今天的趣事。可以帶一點幽默感和口語化表達。"
         case .empathetic:
-            return "日記語氣要細膩、有深度，像是與自己內心的深度對話。著重描寫情緒的層次和變化。"
+            return "日記語氣要細膩、有深度又溫暖，像是與自己內心的深度對話，也像寫給自己的一封溫暖小信。著重描寫情緒的層次和變化。"
         }
     }
     
     /// 标签风格描述（用于标签生成）
     var tagStyleDescription: String {
         switch self {
-        case .warm:
-            return "温暖、感性、治愈"
         case .minimal:
             return "简洁、客观、名词为主"
         case .humorous:
             return "有趣、生动、带点幽默感"
         case .empathetic:
-            return "情感化、共鸣、细腻"
+            return "情感化、共鸣、细腻、温暖治愈"
         }
     }
 }

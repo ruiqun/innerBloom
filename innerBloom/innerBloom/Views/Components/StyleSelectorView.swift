@@ -47,6 +47,6 @@ struct StyleSelectorView: View {
 #Preview {
     ZStack {
         Theme.background.ignoresSafeArea()
-        StyleSelectorView(selectedStyle: .constant(.warm))
+        StyleSelectorView(selectedStyle: .constant(.empathetic))
     }
 }

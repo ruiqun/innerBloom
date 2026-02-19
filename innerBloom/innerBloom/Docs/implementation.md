@@ -240,20 +240,48 @@
   - **何時出現**：每次呼叫後端時自動帶入。
   - **出錯怎麼辦**：後端不支援優先時，直接退化成一般速度，不影響功能。
 
+- **F-027：帳號級別 Premium 綁定（取代純 Apple ID 綁定）**
+  - **背景**：目前 Premium 狀態完全由 StoreKit 2 本機判斷，綁定 Apple ID 而非 App 帳號。存在以下問題：
+    1. 同一 Apple ID + 不同邮箱登入 → 都能享受 Premium（蹭用風險）
+    2. 同一邮箱 + 換 Apple ID / 換手機 → Premium 丟失（用戶體驗差）
+    3. 後端 `is_premium` 由客戶端自報，無法校驗（安全風險）
+  - **做什麼**：
+    1. Supabase 新增 `user_subscriptions` 表，記錄每個帳號的訂閱狀態
+    2. 購買成功後，App 將 StoreKit Transaction 的 `originalTransactionId` + `productId` + 驗證資訊上報到後端
+    3. 後端 Edge Function 透過 Apple App Store Server API (或 JWS 驗證) 校驗 transaction 有效性，寫入 DB
+    4. App 登入後，從後端拉取該帳號的 Premium 狀態（帳號級別），與本機 StoreKit 狀態合併判斷
+    5. StoreKit 本機驗證保留作為離線降級方案（無網路時先用本機快取）
+  - **何時出現**：
+    - 購買完成後：上報 transaction → 後端寫入
+    - App 啟動 / 登入成功 / 回前台：從後端同步帳號 Premium 狀態
+    - 恢復購買後：重新上報 → 後端重新綁定
+  - **出錯怎麼辦**：
+    - 上報失敗：本機記錄待上報項目，下次啟動/回前台自動重試
+    - 後端驗證失敗：保留 StoreKit 本機狀態作為降級（不立即奪走 Premium）
+    - 網路不可用：完全依賴本機快取，恢復後自動同步
+  - **同一 Apple ID、多個 app 帳號**：一個 Apple 訂閱（同一 `original_transaction_id`）在後端只能綁定一個 `user_id`；其他帳號再「恢復購買」會收到 409，不會變成 Premium。
+
+- **F-028：Premium 狀態後端校驗（防止客戶端篡改）**
+  - **做什麼**：後端 Edge Function 不再信任客戶端傳入的 `is_premium` 欄位，改為：
+    1. 從請求的 JWT 中提取 `user_id`
+    2. 查詢 `user_subscriptions` 表判斷該帳號是否為有效 Premium
+    3. 以後端查詢結果為準，決定是否給予 Premium 待遇（優先佇列等）
+  - **何時出現**：所有 AI 請求（analyze/chat/summary/tags）。
+  - **出錯怎麼辦**：查詢失敗時降級為非 Premium 處理，不阻斷請求。
+
 ### Premium 專屬：陪伴角色（口吻風格）
 
 - **F-025：陪伴角色選擇（Premium 才能切換）**
   - **做什麼**：把原本「口吻風格」做成「身邊的角色」，用 **角色卡片清單** 讓使用者像在選一個陪伴者。
-  - **角色（內建 4 個）**：
-    1. **阿暖｜貼心好友**：溫暖治癒、先安撫再給小建議  
+  - **角色（內建 3 個）**：
+    1. **阿澄｜懂你的人**：溫暖治癒、先安撫再給小建議；共情理解、擅長提問與陪你梳理（預設，免費可用）  
     2. **阿衡｜理性同事**：極簡客觀、條列重點、少情緒  
     3. **阿樂｜幽默搭子**：輕鬆有趣、但不冒犯  
-    4. **阿澄｜懂你的人**：共情理解、擅長提問與陪你梳理  
   - **何時出現**：設定頁（S-003）「陪伴角色」點進去 → S-007（Bottom Sheet/卡片清單）。
   - **非 Premium 怎麼辦**：  
     - 看到角色清單但不可切換（灰階 + 鎖頭），點選任一角色 → 直接去付費牆（S-005）。  
     - Premium：可自由切換並立即生效。
-  - **出錯怎麼辦**：角色設定讀不到就使用預設角色 阿澄。
+  - **出錯怎麼辦**：角色設定讀不到就使用預設角色阿澄。舊資料若為已下線的「阿暖」則自動視為阿澄。
 
 - **F-026：聊天與總結都要跟隨角色**
   - **做什麼**：使用者選的角色要同時影響：
@@ -437,7 +465,65 @@
   - 角色屬於使用者設定的一部分，建議跟隨 F-019 同步到雲端。
 
 - **D-022：角色定義（內建）**
-  - 每個角色：id、名稱、描述、示例回覆、對應提示詞規則（用於生成回覆與總結）。
+  - 每個角色：id、名稱、描述、示例回覆、對應提示詞規則（用於生成回覆與總結）。目前為 3 個角色：阿澄（已融合原阿暖）、阿衡、阿樂。
+
+- **D-023：帳號級別訂閱記錄（Supabase `user_subscriptions` 表）**
+  - **表結構**：
+    ```sql
+    CREATE TABLE user_subscriptions (
+      id              UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      user_id         UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+      product_id      TEXT NOT NULL,                    -- 'com.innerbloom.premium.monthly' / 'com.innerbloom.premium.yearly'
+      original_transaction_id TEXT NOT NULL,            -- Apple StoreKit Transaction.originalID（唯一標識一組訂閱）
+      transaction_id  TEXT NOT NULL,                    -- 最新一筆 Transaction ID
+      purchase_date   TIMESTAMPTZ NOT NULL,             -- 首次購買時間
+      expires_at      TIMESTAMPTZ,                      -- 到期時間
+      is_in_trial     BOOLEAN DEFAULT false,            -- 是否在試用期
+      is_active       BOOLEAN DEFAULT true,             -- 是否為有效訂閱
+      environment     TEXT DEFAULT 'Production',        -- 'Sandbox' / 'Production'
+      last_verified_at TIMESTAMPTZ DEFAULT now(),       -- 最後一次後端驗證時間
+      created_at      TIMESTAMPTZ DEFAULT now(),
+      updated_at      TIMESTAMPTZ DEFAULT now(),
+      UNIQUE(user_id, original_transaction_id),
+      UNIQUE(original_transaction_id)   -- 一個 Apple 訂閱全局只能綁定一個 app 帳號，防止同一 Apple ID 多帳號共用 Premium
+    );
+    ```
+  - **一 Apple 訂閱一帳號**：`original_transaction_id` 全局唯一；若另一帳號上報同一筆訂閱，後端回傳 409（此訂閱已與其他帳號綁定）。
+  - **RLS 規則**：
+    - SELECT：`auth.uid() = user_id`（使用者只能查自己的訂閱）
+    - INSERT/UPDATE：僅允許 `service_role`（只有後端 Edge Function 可寫入）
+    - DELETE：不允許（訂閱記錄不可刪除，只設 `is_active = false`）
+  - **索引**：
+    - `idx_user_subscriptions_user_id` ON `(user_id)` — 登入時快速查詢
+    - `idx_user_subscriptions_active` ON `(user_id, is_active)` WHERE `is_active = true` — 判斷有效訂閱
+    - `idx_user_subscriptions_original_tx` ON `(original_transaction_id)` — 上報時 UPSERT 用
+
+- **D-024：訂閱上報請求結構（App → 後端）**
+  - App 購買/恢復成功後，將以下資訊上報給後端 Edge Function：
+    ```json
+    {
+      "original_transaction_id": "2000000123456789",
+      "transaction_id": "2000000987654321",
+      "product_id": "com.innerbloom.premium.monthly",
+      "purchase_date": "2026-02-19T10:30:00Z",
+      "expires_at": "2026-03-19T10:30:00Z",
+      "is_in_trial": false,
+      "jws_representation": "<StoreKit JWS 簽名字串，供後端驗證>"
+    }
+    ```
+  - 後端校驗 JWS 簽名後寫入 `user_subscriptions`（UPSERT by `user_id + original_transaction_id`）
+
+- **D-025：帳號 Premium 狀態查詢響應（後端 → App）**
+  - App 登入 / 啟動 / 回前台時，向後端查詢帳號級別的 Premium 狀態：
+    ```json
+    {
+      "is_premium": true,
+      "is_in_trial": false,
+      "expires_at": "2026-03-19T10:30:00Z",
+      "product_id": "com.innerbloom.premium.monthly"
+    }
+    ```
+  - 查不到有效記錄時回傳 `{ "is_premium": false }`
 
 
 ## 7) Extra Details
@@ -711,3 +797,82 @@
   - 更新後端提示詞組裝：
     - 聊天回覆（F-004）套用角色規則
     - 日記總結（F-005）也套用同一角色規則（讓整篇語氣一致）
+
+---
+
+### 帳號級別 Premium 綁定（B-030 ~ B-034）
+
+> **目標**：Premium 狀態從「綁定 Apple ID」升級為「綁定 App 帳號（Supabase user_id）」，  
+> 解決跨設備/跨 Apple ID 的 Premium 丟失問題，同時堵住客戶端自報 `is_premium` 的安全漏洞。  
+> **原則**：向前兼容，StoreKit 本機驗證保留作為離線降級方案。
+
+- [x] **B-030**：Supabase 建立 `user_subscriptions` 表（F-027 + D-023）
+  - DDL Migration：建立 `user_subscriptions` 表（結構見 D-023）
+  - UNIQUE 約束：`(user_id, original_transaction_id)` — 同一用戶同一組訂閱只有一筆
+  - 索引：`user_id`、`(user_id, is_active)`、`original_transaction_id`
+  - RLS 規則：
+    - SELECT：`auth.uid() = user_id`（用戶只能查自己的）
+    - INSERT/UPDATE：僅 `service_role`（只有 Edge Function 可寫）
+    - DELETE：禁止（過期訂閱設 `is_active = false`，不刪除）
+  - 建立 `updated_at` 自動更新 trigger
+
+- [x] **B-031**：新增 Edge Function — 訂閱上報與驗證（F-027 + D-024）
+  - 新增 Edge Function endpoint：`POST /subscription-sync`
+  - 請求需帶 JWT（從 Authorization header 取得 `user_id`）
+  - 接收參數：`original_transaction_id`、`transaction_id`、`product_id`、`purchase_date`、`expires_at`、`is_in_trial`、`jws_representation`（可選）
+  - 驗證邏輯：
+    1. 從 JWT 取得 `user_id`（必須已登入）
+    2. （Phase 1）基本欄位校驗 + 直接信任 App 上報的 StoreKit 2 verified transaction 資訊
+    3. （Phase 2 預留）用 Apple App Store Server API 或 JWS 解碼做伺服器端二次驗證
+  - 寫入邏輯：UPSERT `user_subscriptions`，以 `(user_id, original_transaction_id)` 為衝突鍵
+    - 衝突時：更新 `transaction_id`、`expires_at`、`is_in_trial`、`is_active`、`last_verified_at`、`updated_at`
+    - 新插入時：填入所有欄位
+  - is_active 判斷：`expires_at > now()` → `true`，否則 `false`
+  - 回傳：`{ "success": true, "is_premium": true/false, "expires_at": "..." }`
+
+- [x] **B-032**：新增 Edge Function — 帳號 Premium 狀態查詢（F-027 + D-025）
+  - 新增 Edge Function endpoint：`GET /subscription-status`（或合併到 `/subscription-sync` 的 GET 方法）
+  - 請求需帶 JWT
+  - 查詢邏輯：
+    1. 從 JWT 取得 `user_id`
+    2. 查詢 `user_subscriptions` WHERE `user_id = $1 AND is_active = true AND expires_at > now()`
+    3. 若有 → 回傳 `{ "is_premium": true, "is_in_trial": ..., "expires_at": ..., "product_id": ... }`
+    4. 若無 → 回傳 `{ "is_premium": false }`
+  - 順便清理過期記錄：若 `expires_at < now()` 且 `is_active = true`，更新 `is_active = false`
+
+- [x] **B-033**：App 端 IAPManager 改造 — 購買後上報 + 登入後同步（F-027）
+  - **新增 `SubscriptionSyncService`**（Services/IAP/SubscriptionSyncService.swift）：
+    - `reportTransaction(transaction: Transaction)` — 購買/恢復成功後上報到後端
+      - 從 StoreKit Transaction 取得：`originalID`、`id`、`productID`、`purchaseDate`、`expirationDate`、`offerType`
+      - 調用 `POST /subscription-sync`（帶 JWT）
+      - 失敗時存入 `pendingTransactions`（UserDefaults），待下次重試
+    - `fetchAccountPremiumStatus()` — 從後端查詢帳號級別 Premium 狀態
+      - 調用 `GET /subscription-status`（帶 JWT）
+      - 回傳 `PremiumStatus`
+    - `retryPendingReports()` — 重試之前失敗的上報
+  - **修改 `IAPManager.syncPremiumStatus()`**：
+    - 原有 StoreKit 本機驗證保留（作為 fallback）
+    - 新增：若已登入，優先從後端查詢帳號 Premium 狀態
+    - 合併策略：`帳號狀態 OR 本機 StoreKit 狀態`（任一為 true 即為 Premium）
+      - 目的：確保離線時本機 StoreKit 仍可用，同時帳號遷移後後端狀態也生效
+  - **修改 `IAPManager.purchase()`**：
+    - 購買成功後，除了 `syncPremiumStatus()`，同步調用 `reportTransaction()`
+  - **修改 `IAPManager.restorePurchases()`**：
+    - 恢復成功後，遍歷 `Transaction.currentEntitlements`，逐筆 `reportTransaction()`
+  - **修改 App 啟動 / 回前台流程**（`innerBloomApp.swift`）：
+    - 登入成功 / Session 恢復後：先 `retryPendingReports()`，再 `syncPremiumStatus()`
+    - 回前台時：已登入狀態下也觸發 `syncPremiumStatus()`（含後端查詢）
+  - **向前兼容**：
+    - 未登入用戶：完全走原有 StoreKit 本機驗證（不呼叫後端）
+    - 已登入用戶：走「後端 + 本機」雙軌驗證
+    - `UsageManager` 不需修改（仍讀 `IAPManager.shared.premiumStatus.isPremium`）
+
+- [x] **B-034**：後端 AI 請求改為後端校驗 Premium（F-028）
+  - **修改 `ai-chat/index.ts`**：
+    - 所有 handler（handleAnalyze/handleChat/handleSummary/handleTags）不再信任 body 中的 `is_premium`
+    - 從請求的 `Authorization` header 取得 JWT → 解碼取得 `user_id`
+    - 用 `service_role` 查詢 `user_subscriptions` 判斷是否為有效 Premium
+    - 以後端查詢結果為準
+  - **App 端 `AIService`**：
+    - `is_premium` 欄位保留傳送（向前兼容），但後端不依賴它
+  - **出錯降級**：查詢失敗時視為非 Premium，不阻斷請求

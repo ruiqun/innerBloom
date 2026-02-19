@@ -173,16 +173,26 @@ struct AIChatPreferences: Codable {
 
 // MARK: - 日记风格
 /// B-016: DiaryStyle 保留向前兼容
-/// B-029: 支援 empathetic，傳給後端以套用角色規則
+/// B-029: 阿暖已移除並併入阿澄；解碼時 "warm" → empathetic
 enum DiaryStyle: String, CaseIterable, Codable {
-    case warm = "warm"          // 阿暖
-    case minimal = "minimal"    // 阿衡
-    case humorous = "humorous"  // 阿樂
-    case empathetic = "empathetic" // 阿澄
+    case empathetic = "empathetic" // 阿澄（已融合原阿暖）
+    case minimal = "minimal"       // 阿衡
+    case humorous = "humorous"     // 阿樂
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = try container.decode(String.self)
+        if raw == "warm" {
+            self = .empathetic
+        } else if let value = DiaryStyle(rawValue: raw) {
+            self = value
+        } else {
+            self = .empathetic
+        }
+    }
     
     var displayName: String {
         switch self {
-        case .warm: return "温暖治愈"
         case .minimal: return "极简客观"
         case .humorous: return "幽默风趣"
         case .empathetic: return "共情理解"
@@ -191,21 +201,18 @@ enum DiaryStyle: String, CaseIterable, Codable {
     
     var systemPromptInstruction: String {
         switch self {
-        case .warm:
-            return "请用温暖、治愈、富有同理心的语气。多关注情感共鸣，像一个温柔的倾听者。"
         case .minimal:
             return "请用简洁、客观、理性的语气。多关注事实描述，像一个专业的记录者，不要过多的修饰词。"
         case .humorous:
             return "请用幽默、风趣、轻松的语气。可以适度调侃，像一个有趣的朋友，让对话充满快乐。"
         case .empathetic:
-            return "请用深度共情、理解、支持的语气。专注于理解用户的感受，给予情感上的认同和支持。"
+            return "请用温暖、治愈、深度共情的语气。先安抚情绪再慢慢聊；理解用户的感受，给予情感上的认同与支持。"
         }
     }
     
-    /// B-016/B-029: 从 AIToneStyle 转换（1:1 映射）
+    /// B-016/B-029: 从 AIToneStyle 转换（AIToneStyle 已无 warm）
     init(from toneStyle: AIToneStyle) {
         switch toneStyle {
-        case .warm: self = .warm
         case .minimal: self = .minimal
         case .humorous: self = .humorous
         case .empathetic: self = .empathetic

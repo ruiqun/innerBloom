@@ -8,6 +8,7 @@
 //  Splash → 恢復 Session → 已登入則並行預載資料 → 至少 1.2 秒 → 跳轉
 //  未登入：Splash 1.2 秒後直接進登入頁
 //  手動登入成功：onChange 偵測 → reloadAfterLogin()
+//  B-033: 登入後重試待上報 transactions + 從後端同步帳號 Premium 狀態
 //
 
 import SwiftUI
@@ -54,7 +55,11 @@ struct innerBloomApp: App {
                     HomeViewModel.shared.reloadAfterLogin()
                     environmentService.onAppBecomeActive()
                     IAPManager.shared.loadCachedStatus()
-                    Task { await IAPManager.shared.syncPremiumStatus() }
+                    Task {
+                        // B-033: 登入後重試待上報 + 從後端同步帳號 Premium
+                        await SubscriptionSyncService.shared.retryPendingReports()
+                        await IAPManager.shared.syncPremiumStatus()
+                    }
                 }
             }
             .onChange(of: scenePhase) { oldPhase, newPhase in
@@ -91,6 +96,8 @@ struct innerBloomApp: App {
                     EnvironmentService.shared.onAppBecomeActive()
                 }
                 group.addTask {
+                    // B-033: 啟動時重試待上報 + 帳號級別 Premium 同步
+                    await SubscriptionSyncService.shared.retryPendingReports()
                     IAPManager.shared.loadCachedStatus()
                     await IAPManager.shared.syncPremiumStatus()
                 }

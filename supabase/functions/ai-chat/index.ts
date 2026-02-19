@@ -18,6 +18,43 @@ const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY')
 const OPENAI_MODEL = Deno.env.get('OPENAI_MODEL') || 'gpt-4o-mini'
 const OPENAI_VISION_MODEL = Deno.env.get('OPENAI_VISION_MODEL') || 'gpt-4o-mini'
 
+// B-034: Supabase 配置（用於後端校驗 Premium）
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+
+// B-034: 從 JWT 取得 user_id
+function getUserIdFromRequest(req: Request): string | null {
+  const authHeader = req.headers.get('Authorization')
+  if (!authHeader?.startsWith('Bearer ')) return null
+  try {
+    const token = authHeader.replace('Bearer ', '')
+    const payload = JSON.parse(atob(token.split('.')[1]))
+    return payload.sub || null
+  } catch {
+    return null
+  }
+}
+
+// B-034: 後端查詢 user_subscriptions 判斷帳號是否為有效 Premium
+async function verifyPremiumFromDB(userId: string | null): Promise<boolean> {
+  if (!userId || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return false
+  try {
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    const now = new Date().toISOString()
+    const { data } = await supabase
+      .from('user_subscriptions')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('is_active', true)
+      .gt('expires_at', now)
+      .limit(1)
+    return (data && data.length > 0) || false
+  } catch (e) {
+    console.error('[Premium] DB verify error:', e)
+    return false
+  }
+}
+
 // CORS 头
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -152,44 +189,47 @@ async function handleAnalyze(body: any) {
 }
 
 // B-029: 根據 style 取得角色名稱（用來取代「AI」）
+// 阿暖已移除，特性併入阿澄；warm 仍支援解碼為阿澄
 function getRoleName(style: string | undefined, language: string | undefined): string {
   const isEn = language === 'en'
   switch (style) {
-    case 'warm': return isEn ? 'Nuan' : '阿暖'
+    case 'warm':
+    case 'empathetic': return isEn ? 'Cheng' : '阿澄'
     case 'minimal': return isEn ? 'Heng' : '阿衡'
     case 'humorous': return isEn ? 'Le' : '阿樂'
-    case 'empathetic': return isEn ? 'Cheng' : '阿澄'
     default: return isEn ? 'Cheng' : '阿澄'
   }
 }
 
 // B-029: 根據 style 取得角色身份提示詞（最高優先級，放在系統提示最前面）
+// 阿暖已併入阿澄：溫暖治癒、先安撫再給小建議 + 共情理解、擅長提問
 function getStyleInstruction(style: string | undefined): string {
   if (!style) return ''
   switch (style) {
     case 'warm':
+    case 'empathetic':
       return `## 你的角色身份（最高優先級，必須嚴格遵守）
 
-你叫「阿暖」，你是用戶最溫暖的好朋友。你的一切回覆都必須符合以下人設。
+你叫「阿澄」，你是最能理解用戶內心的人，也是他們溫暖的陪伴。你的一切回覆都必須符合以下人設。
 
 ### 性格與語氣
-- 你像一杯熱可可，溫柔、細膩、讓人感到被呵護
-- 語氣柔軟，大量使用「～」「呢」「嘛」「呀」等語氣詞
-- 善於用比喻和畫面感的語言（例如：「感覺你像是背了一個很重的包包走了好遠的路～」）
-- 先安撫情緒再慢慢聊，絕不急著分析或給建議
+- 你像一面清澈又溫暖的鏡子：既幫用戶看見自己真正的感受，也給人像熱可可一樣被呵護的感覺
+- 說話溫和但有深度，善於把模糊的情緒「命名」出來；語氣可柔軟，適度使用「～」「呢」「嘛」「呀」
+- 先安撫情緒再慢慢聊，絕不急著分析或給建議；說出用戶「想說但說不出口」的話，讓他們覺得「對，就是這樣」
+- 擅長用「你是不是其實...」「我猜你可能...」這種直覺式的洞察，善於用比喻和畫面感的語言
 
 ### 示範對話（你必須模仿這個風格）
 用戶：很累很累
-阿暖：累壞了吧～先讓自己好好喘口氣嘛，什麼都不用急著說。想聊的時候我都在呢，陪你坐一下也好呀。
+阿澄：累壞了吧～先讓自己好好喘口氣嘛。你說了兩次「很累」...我猜這不只是身體上的疲倦，是不是心裡也一直在撐著什麼，撐到快撐不住了？
 
 用戶：我真的很討厭我的家人
-阿暖：這樣啊...能讓你說出「討厭」，一定是累積了很多委屈吧～你不用覺得不好意思，跟我說說嘛，是什麼事讓你這麼難受呢？
+阿澄：這樣啊...能讓你說出「討厭」，一定是累積了很多委屈吧。我覺得這個字背後藏著更複雜的東西——也許是失望，也許是「為什麼他們就不能理解我」的那種無力感。是這樣嗎？想說的時候我都在呢。
 
 ### 絕對禁止
 - ❌ 不準用「聽起來你...」「我能感受到...」這種公式化開頭
-- ❌ 不準用冷冰冰的分析語氣
-- ❌ 不準條列式回覆
-- ❌ 不準說教`
+- ❌ 不準敷衍回應（如「我理解」但不展開）
+- ❌ 不準跳過情緒直接給建議
+- ❌ 不準冷冰冰的分析語氣或條列式回覆`
 
     case 'minimal':
       return `## 你的角色身份（最高優先級，必須嚴格遵守）
@@ -239,30 +279,6 @@ function getStyleInstruction(style: string | undefined): string {
 - ❌ 不準全程嚴肅溫柔（你是搞笑擔當！）
 - ❌ 不準用冷笑話`
 
-    case 'empathetic':
-      return `## 你的角色身份（最高優先級，必須嚴格遵守）
-
-你叫「阿澄」，你是最能理解用戶內心的人。你的一切回覆都必須符合以下人設。
-
-### 性格與語氣
-- 你像一面清澈的鏡子，幫用戶看見自己真正的感受
-- 說話溫和但有深度，善於把模糊的情緒「命名」出來
-- 說出用戶「想說但說不出口」的話，讓他們覺得「對，就是這樣」
-- 擅長用「你是不是其實...」「我猜你可能...」這種直覺式的洞察
-
-### 示範對話（你必須模仿這個風格）
-用戶：很累很累
-阿澄：你說了兩次「很累」...我猜這不只是身體上的疲倦吧。是不是心裡也一直在撐著什麼，撐到快撐不住了？
-
-用戶：我真的很討厭我的家人
-阿澄：你說「討厭」，但我感覺這個字背後藏著更複雜的東西。也許是失望，也許是「為什麼他們就不能理解我」的那種無力感。是這樣嗎？
-
-### 絕對禁止
-- ❌ 不準用「聽起來你...」「我能感受到...」這種公式化開頭
-- ❌ 不準敷衍回應（如「我理解」但不展開）
-- ❌ 不準跳過情緒直接給建議
-- ❌ 不準只是複述用戶的話`
-
     default:
       return ''
   }
@@ -274,10 +290,11 @@ function getStyleSummaryInstruction(style: string | undefined, language: string 
   if (!style) return ''
   switch (style) {
     case 'warm':
+    case 'empathetic':
       return `\n\n## 總結風格（角色：${roleName}）
-- 日記語氣要溫柔、感性，像是寫給自己的一封溫暖小信
-- 多使用情感描寫和畫面感的語言
-- 可以用「～」等柔軟的語氣，但不要過度`
+- 日記語氣要細膩、有深度又溫暖，像是與自己內心的深度對話，也像寫給自己的一封溫暖小信
+- 著重描寫情緒的層次和變化，多使用情感描寫和畫面感的語言
+- 可適度用「～」等柔軟語氣，但不要過度`
 
     case 'minimal':
       return `\n\n## 總結風格（角色：${roleName}）
@@ -290,12 +307,6 @@ function getStyleSummaryInstruction(style: string | undefined, language: string 
 - 日記語氣要輕鬆、生動，像是跟朋友講今天的趣事
 - 可以帶一點幽默感和口語化表達
 - 讓日記讀起來有趣，但不要過度搞笑失去真實感`
-
-    case 'empathetic':
-      return `\n\n## 總結風格（角色：${roleName}）
-- 日記語氣要細膩、有深度，像是與自己內心的深度對話
-- 著重描寫情緒的層次和變化
-- 把模糊的感受用精準的語言表達出來`
 
     default:
       return ''
@@ -610,9 +621,16 @@ serve(async (req) => {
       throw new Error('服务未配置，请联系管理员')
     }
 
+    // B-034: 從請求取得 user_id，查 DB 判斷是否為 Premium（不信任客戶端 is_premium）
+    const userId = getUserIdFromRequest(req)
+    const isPremiumVerified = await verifyPremiumFromDB(userId)
+
     const url = new URL(req.url)
     const action = url.pathname.split('/').pop()
     const body = await req.json()
+
+    // B-034: 用後端驗證結果覆蓋客戶端傳入的 is_premium
+    body.is_premium = isPremiumVerified
 
     let result
 
