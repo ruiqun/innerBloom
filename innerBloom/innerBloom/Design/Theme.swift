@@ -109,12 +109,12 @@ struct Theme {
         .system(size: size, weight: weight, design: .serif)
     }
     
-    /// 应用标题字体：16pt、medium、serif（用于「InnerBloom」及日记列表预览等）
+    /// 應用標題字體：16pt、medium、serif（用於主頁「InnerBloom」標題與日記列表預覽等；改大小請改 16）
     static func titleFont() -> Font {
         royalFont(size: 16, weight: .medium)
     }
     
-    /// 标题字间距
+    /// 標題字距（主頁 InnerBloom 標題用）
     static let titleTracking: CGFloat = 2
     
     /// 列表辅助字体：serif 小号（日期、底部提示等，与标题风格协调）

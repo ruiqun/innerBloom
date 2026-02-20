@@ -291,9 +291,6 @@ struct UserSettings: Codable {
     
     // MARK: - 隐私设定
     
-    /// 是否允许发送媒体到 AI（用于隐私敏感用户）
-    var allowMediaAnalysis: Bool = true
-    
     /// 是否允许发送位置信息
     var allowLocationSharing: Bool = true
     
@@ -336,7 +333,6 @@ struct UserSettings: Codable {
         autoGenerateTitle = true
         autoGenerateTags = true
         appLanguage = .zhHant
-        allowMediaAnalysis = true
         allowLocationSharing = true
         enableDailyReminder = false
         reminderTime = nil

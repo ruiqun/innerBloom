@@ -346,10 +346,10 @@ struct ContentView: View {
     private var browsingModeView: some View {
         ZStack(alignment: .bottomTrailing) {
             VStack(spacing: 16) {
-                // 顶部 Header
+                // 頂部 Header（「InnerBloom」標題：僅此處用較大字體，其他列表仍用 titleFont 16pt）
                 HStack {
                     Text("InnerBloom")
-                        .font(Theme.titleFont())
+                        .font(Theme.royalFont(size: 22, weight: .medium))
                         .tracking(Theme.titleTracking)
                         .foregroundColor(Theme.textPrimary)
                     

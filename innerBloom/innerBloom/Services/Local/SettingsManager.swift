@@ -174,16 +174,7 @@ final class SettingsManager {
     
     // MARK: - 隐私设定
     
-    /// 是否允许媒体分析
-    var allowMediaAnalysis: Bool {
-        settings.allowMediaAnalysis
-    }
-    
-    /// 设置是否允许媒体分析
-    func setAllowMediaAnalysis(_ enabled: Bool) {
-        settings.allowMediaAnalysis = enabled
-        saveSettings()
-    }
+    /// 媒體分析：已移除開關，一律視為允許（核心功能需分析照片/影片以生成日記）
     
     /// 是否允许位置分享
     var allowLocationSharing: Bool {

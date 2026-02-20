@@ -311,15 +311,7 @@ struct SettingsView: View {
     private var privacySection: some View {
         SettingsSection(title: String.localized(.privacy), icon: "lock.fill") {
             VStack(spacing: 16) {
-                SettingsToggleRow(
-                    title: String.localized(.allowMediaAnalysis),
-                    subtitle: String.localized(.allowMediaAnalysisDesc),
-                    isOn: Binding(
-                        get: { settingsManager.allowMediaAnalysis },
-                        set: { settingsManager.setAllowMediaAnalysis($0) }
-                    )
-                )
-                
+                // 媒體分析已移除：預設一律提供，無開關
                 SettingsToggleRow(
                     title: String.localized(.allowLocationSharing),
                     subtitle: String.localized(.allowLocationSharingDesc),

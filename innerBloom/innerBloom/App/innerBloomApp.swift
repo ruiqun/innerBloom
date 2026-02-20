@@ -126,9 +126,11 @@ struct innerBloomApp: App {
                 .ignoresSafeArea()
             
             VStack(spacing: 16) {
-                Image(systemName: "crown.fill")
-                    .font(.system(size: 48))
-                    .foregroundColor(Theme.accent)
+                Image("AppLogo")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 125, height: 125)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
                     .shadow(color: Theme.goldLight.opacity(0.3), radius: 10, x: 0, y: 0)
                 
                 Text("InnerBloom")

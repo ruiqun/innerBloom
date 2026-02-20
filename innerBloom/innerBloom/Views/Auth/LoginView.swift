@@ -116,11 +116,11 @@ struct LoginView: View {
         .id(localization.languageChangeId)
     }
     
-    // MARK: - Logo 區域（金色皇冠 + 深色玻璃擬態 + 金色光暈）
+    // MARK: - Logo 區域（App 圖標 + 深色玻璃擬態 + 金色光暈）
     
     private var logoSection: some View {
         VStack(spacing: 16) {
-            // App Logo — 深色玻璃擬態圓形 + 金色皇冠
+            // App Logo — 深色玻璃擬態圓形 + App 圖標（有人頭）
             ZStack {
                 // 極淡金色光暈（精品招牌燈感）
                 Circle()
@@ -142,10 +142,12 @@ struct LoginView: View {
                     .stroke(Theme.accent.opacity(0.4), lineWidth: 1)
                     .frame(width: 100, height: 100)
                 
-                // 金色皇冠圖標
-                Image(systemName: "crown.fill")
-                    .font(.system(size: 38))
-                    .foregroundColor(Theme.accent)
+                // App 圖標（與外圈同大、貼齊）
+                Image("AppLogo")
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 135, height: 135)
+                    .clipShape(Circle())
                     .shadow(color: Theme.goldLight.opacity(0.3), radius: 8, x: 0, y: 0)
             }
             
@@ -385,17 +387,11 @@ struct LoginView: View {
     // MARK: - 隱私提示
     
     private var privacyHintSection: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "lock.shield.fill")
-                .font(.system(size: 11))
-                .foregroundColor(Theme.textSecondary.opacity(0.4))
-            
-            Text(String.localized(.loginPrivacyHint))
-                .font(.system(size: 11))
-                .foregroundColor(Theme.textSecondary.opacity(0.4))
-                .multilineTextAlignment(.center)
-        }
-        .padding(.top, 8)
+        Text(String.localized(.loginPrivacyHint))
+            .font(.system(size: 11))
+            .foregroundColor(Theme.textSecondary.opacity(0.4))
+            .multilineTextAlignment(.center)
+            .padding(.top, 8)
     }
     
     // MARK: - 背景裝飾（金色抽象幾何色塊 + 光暈）

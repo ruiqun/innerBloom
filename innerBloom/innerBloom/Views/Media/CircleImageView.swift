@@ -71,10 +71,12 @@ struct CircleImageView: View {
                         VStack(spacing: 12) {
                             // 极简徽章组合
                             VStack(spacing: 4) {
-                                // 顶部小皇冠
-                                Image(systemName: "crown")
-                                    .font(.system(size: 25, weight: .light))
-                                    .foregroundColor(Theme.accent)
+                                // App 圖標（與 App Icon 同款）
+                                Image("AppLogo")
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 45, height: 45)
+                                    .clipShape(Circle())
                                 
                                 // 装饰线
                                 Rectangle()
