@@ -109,11 +109,11 @@ enum AIToneStyle: String, Codable, CaseIterable {
     var systemPromptInstruction: String {
         switch self {
         case .minimal:
-            return "请用简洁、客观、理性的语气。多关注事实描述，像一个专业的记录者，不要过多的修饰词。"
+            return "請用簡潔、客觀、理性的語氣。多關注事實描述，像一個專業的記錄者，不要過多的修飾詞。"
         case .humorous:
-            return "请用幽默、风趣、轻松的语气。可以适度调侃，像一个有趣的朋友，让对话充满快乐。"
+            return "請用幽默、風趣、輕鬆的語氣。可以適度調侃，像一個有趣的朋友，讓對話充滿快樂。"
         case .empathetic:
-            return "请用温暖、治愈、深度共情的语气。先安抚情绪再慢慢聊；理解用户的感受，给予情感上的认同与支持。"
+            return "請用溫暖、治癒、深度共情的語氣。先安撫情緒再慢慢聊；理解用戶的感受，給予情感上的認同與支持。"
         }
     }
     
@@ -215,11 +215,11 @@ enum AIToneStyle: String, Codable, CaseIterable {
     var tagStyleDescription: String {
         switch self {
         case .minimal:
-            return "简洁、客观、名词为主"
+            return "簡潔、客觀、名詞為主"
         case .humorous:
-            return "有趣、生动、带点幽默感"
+            return "有趣、生動、帶點幽默感"
         case .empathetic:
-            return "情感化、共鸣、细腻、温暖治愈"
+            return "情感化、共鳴、細膩、溫暖治癒"
         }
     }
 }
@@ -248,10 +248,11 @@ enum AppLanguage: String, Codable, CaseIterable {
         switch self {
         case .zhHant:
             return """
-            ## 语言规则（最高优先级，不可违反）
-            - 你必须始终使用「繁體中文」回覆，無論用戶使用什麼語言輸入。
-            - 禁止使用簡體中文、英文或其他語言回覆。
+            ## 語言規則（最高優先級，不可違反）
+            - 你必須始終使用「繁體中文」回覆，無論用戶使用什麼語言輸入。
+            - 嚴禁使用簡體中文、英文或其他語言回覆。
             - 所有輸出（包括 JSON 中的文字值）都必須是繁體中文。
+            - 注意區分：「說」非「说」、「記」非「记」、「圖」非「图」、「與」非「与」、「這」非「这」。
             """
         case .en:
             return """

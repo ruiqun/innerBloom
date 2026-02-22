@@ -193,8 +193,8 @@ enum DiaryStyle: String, CaseIterable, Codable {
     
     var displayName: String {
         switch self {
-        case .minimal: return "极简客观"
-        case .humorous: return "幽默风趣"
+        case .minimal: return "極簡客觀"
+        case .humorous: return "幽默風趣"
         case .empathetic: return "共情理解"
         }
     }
@@ -202,11 +202,11 @@ enum DiaryStyle: String, CaseIterable, Codable {
     var systemPromptInstruction: String {
         switch self {
         case .minimal:
-            return "请用简洁、客观、理性的语气。多关注事实描述，像一个专业的记录者，不要过多的修饰词。"
+            return "請用簡潔、客觀、理性的語氣。多關注事實描述，像一個專業的記錄者，不要過多的修飾詞。"
         case .humorous:
-            return "请用幽默、风趣、轻松的语气。可以适度调侃，像一个有趣的朋友，让对话充满快乐。"
+            return "請用幽默、風趣、輕鬆的語氣。可以適度調侃，像一個有趣的朋友，讓對話充滿快樂。"
         case .empathetic:
-            return "请用温暖、治愈、深度共情的语气。先安抚情绪再慢慢聊；理解用户的感受，给予情感上的认同与支持。"
+            return "請用溫暖、治癒、深度共情的語氣。先安撫情緒再慢慢聊；理解用戶的感受，給予情感上的認同與支持。"
         }
     }
     
@@ -823,7 +823,7 @@ final class AIService: AIServiceProtocol {
         
         let roleName = userToneStyle.roleName
         let conversationText = messages
-            .map { "\($0.sender == .user ? "用户" : roleName)：\($0.content)" }
+            .map { "\($0.sender == .user ? "用戶" : roleName)：\($0.content)" }
             .joined(separator: "\n")
         
         // 根據對話深度構建不同的系統提示
@@ -875,26 +875,26 @@ final class AIService: AIServiceProtocol {
         print("[AIService] 📝 ========== Summary System Prompt End ==========")
         
         // 用户提示
-        var userPrompt = "以下是用户与\(roleName)的对话记录：\n\n\(conversationText)\n\n"
+        var userPrompt = "以下是用戶與\(roleName)的對話記錄：\n\n\(conversationText)\n\n"
         
         if let analysis = analysisContext {
-            userPrompt += "图片内容：\(analysis.description)\n\n"
+            userPrompt += "圖片內容：\(analysis.description)\n\n"
         }
         
-        // 添加环境上下文（作为客观事实依据）
+        // 添加環境上下文（作為客觀事實依據）
         if let env = environmentContext {
-            userPrompt += "【客观事实（必须严格遵守）】\n"
+            userPrompt += "【客觀事實（必須嚴格遵守）】\n"
             if let weather = env.weather {
-                userPrompt += "- 天气：\(weather.condition)，\(Int(weather.temperature ?? 0))°C\n"
+                userPrompt += "- 天氣：\(weather.condition)，\(Int(weather.temperature ?? 0))°C\n"
             }
-            userPrompt += "- 时间：\(env.timeInfo.description)\n"
+            userPrompt += "- 時間：\(env.timeInfo.description)\n"
             if let location = env.location?.city {
-                userPrompt += "- 地点：\(location)\n"
+                userPrompt += "- 地點：\(location)\n"
             }
             userPrompt += "\n"
         }
         
-        userPrompt += "请根据以上内容，生成一篇使用者口吻的日记。"
+        userPrompt += "請根據以上內容，生成一篇使用者口吻的日記。"
         
         do {
             let openaiMessages = [
@@ -939,30 +939,30 @@ final class AIService: AIServiceProtocol {
         
         // 系统提示
         var systemPrompt = """
-        你是一个标签生成助手。请根据对话内容生成**最多3个**标签。
+        你是一個標籤生成助手。請根據對話內容生成**最多3個**標籤。
         
         \(userLanguage.aiLanguageInstruction)
         
         要求：
-        1. 返回 JSON 数组格式：["标签1", "标签2", "标签3"]
-        2. **最多3个标签**，宁少勿多，选最核心的
-        3. 标签应该是简短的关键词（2-4个字）
-        4. 只返回 JSON 数组，不要其他文字
+        1. 返回 JSON 陣列格式：["標籤1", "標籤2", "標籤3"]
+        2. **最多3個標籤**，寧少勿多，選最核心的
+        3. 標籤應該是簡短的關鍵詞（2-4個字）
+        4. 只返回 JSON 陣列，不要其他文字
         """
         
         // 如果有已存在的标签，优先复用
         if !existingTags.isEmpty {
             systemPrompt += """
             
-            5. **优先复用原则**：以下是已存在的标签，如果内容匹配，**必须优先使用**这些标签，避免创建含义相近的新标签：
-               已有标签：[\(existingTags.joined(separator: ", "))]
-               例如：如果已有「家人」，不要新建「家庭」；如果已有「旅行」，不要新建「旅游」
+            5. **優先複用原則**：以下是已存在的標籤，如果內容匹配，**必須優先使用**這些標籤，避免建立含義相近的新標籤：
+               已有標籤：[\(existingTags.joined(separator: ", "))]
+               例如：如果已有「家人」，不要新建「家庭」；如果已有「旅行」，不要新建「旅遊」
             """
         }
         
         // B-016: 使用用户设定的标签风格
         let styleNum = existingTags.isEmpty ? 5 : 6
-        systemPrompt += "\n\(styleNum). 标签风格：\(userToneStyle.tagStyleDescription)"
+        systemPrompt += "\n\(styleNum). 標籤風格：\(userToneStyle.tagStyleDescription)"
         
         // B-016: 调试日志 - 打印标签生成的系统提示词
         print("[AIService] 🏷️ ========== Tags System Prompt Start ==========")
@@ -973,21 +973,21 @@ final class AIService: AIServiceProtocol {
         var userPrompt = ""
         
         if let analysis = analysisContext {
-            userPrompt += "图片内容：\(analysis.description)\n\n"
+            userPrompt += "圖片內容：\(analysis.description)\n\n"
             if let sceneTags = analysis.sceneTags, !sceneTags.isEmpty {
-                userPrompt += "场景标签：\(sceneTags.joined(separator: ", "))\n\n"
+                userPrompt += "場景標籤：\(sceneTags.joined(separator: ", "))\n\n"
             }
         }
         
         if !messages.isEmpty {
             let tagRoleName = userToneStyle.roleName
             let conversationText = messages
-                .map { "\($0.sender == .user ? "用户" : tagRoleName)：\($0.content)" }
+                .map { "\($0.sender == .user ? "用戶" : tagRoleName)：\($0.content)" }
                 .joined(separator: "\n")
-            userPrompt += "对话记录：\n\(conversationText)\n\n"
+            userPrompt += "對話記錄：\n\(conversationText)\n\n"
         }
         
-        userPrompt += "请根据以上内容生成**最多3个**标签。"
+        userPrompt += "請根據以上內容生成**最多3個**標籤。"
         
         do {
             let openaiMessages = [
@@ -1024,15 +1024,15 @@ final class AIService: AIServiceProtocol {
         if let analysis = analysisContext {
             let mood = analysis.mood ?? "平静"
             return """
-            今天\(mood == "joyful" || mood == "开心" ? "心情很好" : "记录一下生活")。\(analysis.description)
+            今天\(mood == "joyful" || mood == "開心" ? "心情很好" : "記錄一下生活")。\(analysis.description)
             
             \(userContent.isEmpty ? "" : userContent)
             
-            这是一段值得记住的时光。
+            這是一段值得記住的時光。
             """
         }
         
-        return userContent.isEmpty ? "今天的日记暂无内容。" : userContent
+        return userContent.isEmpty ? "今天的日記暫無內容。" : userContent
     }
     
     // MARK: - F-005: Mock 标签生成（离线/未配置时）
@@ -1057,18 +1057,18 @@ final class AIService: AIServiceProtocol {
             "姐姐": "家人",
             "哥哥": "家人",
             "爸": "家人",
-            "妈": "家人",
+            "媽": "家人",
             "旅行": "旅行",
-            "旅游": "旅行",
+            "旅遊": "旅行",
             "美食": "美食",
             "吃": "美食",
             "工作": "工作",
-            "开心": "开心",
-            "快乐": "开心",
-            "难过": "难过",
-            "想念": "怀念",
-            "怀念": "怀念",
-            "回忆": "回忆"
+            "開心": "開心",
+            "快樂": "開心",
+            "難過": "難過",
+            "想念": "懷念",
+            "懷念": "懷念",
+            "回憶": "回憶"
         ]
         
         for (keyword, tag) in keywordMapping {
@@ -1140,35 +1140,35 @@ final class AIService: AIServiceProtocol {
         
         // 构建系统提示
         let systemPrompt = """
-        你是一个专业的图片分析助手，负责分析用户上传的照片或视频截图。
-        请用温暖、富有同理心的语气进行分析。
+        你是一個專業的圖片分析助手，負責分析用戶上傳的照片或影片截圖。
+        請用溫暖、富有同理心的語氣進行分析。
         
         \(userLanguage.aiLanguageInstruction)
         
-        请分析图片并返回以下信息：
-        1. 描述你看到的内容（2-3句话）
-        2. 识别场景标签（3-5个关键词）
-        3. 判断图片的情绪氛围（如：peaceful, joyful, nostalgic, adventurous 等）
-        4. 建议一个开场白，用来开始与用户的对话
-        5. 判断图片中是否有人物
+        請分析圖片並返回以下資訊：
+        1. 描述你看到的內容（2-3句話）
+        2. 識別場景標籤（3-5個關鍵詞）
+        3. 判斷圖片的情緒氛圍（如：peaceful, joyful, nostalgic, adventurous 等）
+        4. 建議一個開場白，用來開始與用戶的對話
+        5. 判斷圖片中是否有人物
         
-        请用 JSON 格式返回，格式如下：
+        請用 JSON 格式返回，格式如下：
         {
-          "description": "图片描述",
-          "sceneTags": ["标签1", "标签2"],
-          "mood": "情绪",
-          "suggestedOpener": "开场白",
+          "description": "圖片描述",
+          "sceneTags": ["標籤1", "標籤2"],
+          "mood": "情緒",
+          "suggestedOpener": "開場白",
           "hasPeople": true/false,
           "confidence": 0.9
         }
         
-        请确保返回有效的 JSON 格式，不要包含任何其他文字。
+        請確保返回有效的 JSON 格式，不要包含任何其他文字。
         """
         
         // 构建用户提示
-        var userPrompt = "请分析这张\(mediaType == .photo ? "照片" : "视频截图")"
+        var userPrompt = "請分析這張\(mediaType == .photo ? "照片" : "影片截圖")"
         if let context = userContext, !context.isEmpty {
-            userPrompt += "。用户说：\(context)"
+            userPrompt += "。用戶說：\(context)"
         }
         
         do {
@@ -1237,30 +1237,30 @@ final class AIService: AIServiceProtocol {
         // 1. 媒体分析（权重高）- 只在有分析结果时提供
         if let analysis = analysisContext {
             contextParts.append("""
-            【照片/影片内容】
-            - 场景：\(analysis.description)
-            - 标签：\(analysis.sceneTags?.joined(separator: "、") ?? "无")
-            - 氛围：\(analysis.mood ?? "未知")
+            【照片/影片內容】
+            - 場景：\(analysis.description)
+            - 標籤：\(analysis.sceneTags?.joined(separator: "、") ?? "無")
+            - 氛圍：\(analysis.mood ?? "未知")
             - 有人物：\(analysis.hasPeople == true ? "是" : "否")
             """)
         }
         
         // 2. 时间（轻量点缀）- 只在有时间信息时提供
         if let env = environmentContext {
-            let timeDesc = "当前：\(env.timeInfo.description)"
-            contextParts.append("【时间】\(timeDesc)")
+            let timeDesc = "當前：\(env.timeInfo.description)"
+            contextParts.append("【時間】\(timeDesc)")
         }
         
         // 3. 天气（轻量点缀）- 只在有天气信息时提供
         if let env = environmentContext, let weather = env.weather {
             let weatherDesc = "\(weather.condition)，\(Int(weather.temperature ?? 0))°C"
-            contextParts.append("【天气】\(weatherDesc)")
+            contextParts.append("【天氣】\(weatherDesc)")
         }
         
         // 构建完整的上下文提示
         var fullPrompt = systemPrompt
         if !contextParts.isEmpty {
-            fullPrompt += "\n\n---\n可用上下文（按需使用，没有的不要编造）：\n" + contextParts.joined(separator: "\n")
+            fullPrompt += "\n\n---\n可用上下文（按需使用，沒有的不要編造）：\n" + contextParts.joined(separator: "\n")
         }
         
         // B-016: 调试日志 - 打印完整系统提示词

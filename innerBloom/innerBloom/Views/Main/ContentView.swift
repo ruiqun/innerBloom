@@ -429,15 +429,16 @@ struct ContentView: View {
                     .frame(width: 56, height: 56)
                     .overlay(
                         Image(systemName: "plus")
-                            .font(.system(size: 24, weight: .light))
+                            .font(.system(size: 24, weight: .light).bold())
                             .foregroundColor(Theme.accent)
                     )
                     .background(
                         Circle()
-                            .fill(Theme.accent.opacity(0.1))
+                            .fill(Theme.accent.opacity(0.7))
                             .blur(radius: 5)
                     )
             }
+            // .opacity(0.75)
             .padding(.trailing, 24)
             .padding(.bottom, 40)
         }

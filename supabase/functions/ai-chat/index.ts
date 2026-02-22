@@ -63,33 +63,33 @@ const corsHeaders = {
 
 // 系统提示词
 const SYSTEM_PROMPTS = {
-  analyze: `你是一个专业的图片分析助手，负责分析用户上传的照片或视频截图。
-请用温暖、富有同理心的语气进行分析。
+  analyze: `你是一個專業的圖片分析助手，負責分析用戶上傳的照片或影片截圖。
+請用溫暖、富有同理心的語氣進行分析。
 
-请分析图片并返回以下 JSON 格式：
+請分析圖片並返回以下 JSON 格式：
 {
-  "description": "图片描述（2-3句话）",
-  "sceneTags": ["标签1", "标签2", "标签3"],
-  "mood": "情绪氛围（peaceful/joyful/nostalgic/adventurous等）",
-  "suggestedOpener": "建议的开场白",
+  "description": "圖片描述（2-3句話）",
+  "sceneTags": ["標籤1", "標籤2", "標籤3"],
+  "mood": "情緒氛圍（peaceful/joyful/nostalgic/adventurous等）",
+  "suggestedOpener": "建議的開場白",
   "hasPeople": true或false,
   "confidence": 0.0-1.0
 }
 
-请确保返回有效的 JSON 格式。`,
+請確保返回有效的 JSON 格式。`,
 
   // "最懂你的好朋友"模式 - 动态生成
   chat: '', // 由 buildBestFriendPrompt 动态生成
 
   summary: '', // 由 buildSummaryPrompt 動態生成
 
-  tags: `你是一个标签生成助手。请根据对话内容生成**最多3个**标签。
+  tags: `你是一個標籤生成助手。請根據對話內容生成**最多3個**標籤。
 
 要求：
-1. 返回 JSON 数组格式：["标签1", "标签2", "标签3"]
-2. **最多3个标签**，宁少勿多，选最核心的
-3. 标签应该是简短的关键词（2-4个字）
-4. 只返回 JSON 数组，不要其他文字`
+1. 返回 JSON 陣列格式：["標籤1", "標籤2", "標籤3"]
+2. **最多3個標籤**，寧少勿多，選最核心的
+3. 標籤應該是簡短的關鍵詞（2-4個字）
+4. 只返回 JSON 陣列，不要其他文字`
 }
 
 // 调用 OpenAI API（带性能日志）
@@ -140,9 +140,9 @@ async function handleAnalyze(body: any) {
   const imageSizeKB = Math.round(image_base64.length * 0.75 / 1024)
   console.log(`[Analyze] ⏱️ Start | Image size: ${imageSizeKB}KB | Type: ${media_type} | Language: ${language || 'zh-Hant'}`)
 
-  let userPrompt = `请分析这张${media_type === 'video' ? '视频截图' : '照片'}`
+  let userPrompt = `請分析這張${media_type === 'video' ? '影片截圖' : '照片'}`
   if (user_context) {
-    userPrompt += `。用户说：${user_context}`
+    userPrompt += `。用戶說：${user_context}`
   }
 
   // B-017: 语言规则放在最前面，分析结果（description、sceneTags、suggestedOpener）跟随语言设定
@@ -181,7 +181,7 @@ async function handleAnalyze(body: any) {
       description: response,
       sceneTags: isEn ? ['life', 'daily'] : ['生活', '日常'],
       mood: 'peaceful',
-      suggestedOpener: isEn ? 'This photo looks like it has a story. Can you tell me about it?' : '这张照片看起来很有故事，能跟我说说吗？',
+      suggestedOpener: isEn ? 'This photo looks like it has a story. Can you tell me about it?' : '這張照片看起來很有故事，能跟我說說嗎？',
       hasPeople: null,
       confidence: 0.7
     }
@@ -322,10 +322,11 @@ function getLanguageInstruction(language: string | undefined): string {
 - All output (including text values inside JSON) MUST be in English.`
   }
   // 默认繁体中文
-  return `## 语言规则（最高优先级，不可违反）
-- 你必须始终使用「繁體中文」回覆，無論用戶使用什麼語言輸入。
-- 禁止使用簡體中文、英文或其他語言回覆。
-- 所有輸出（包括 JSON 中的文字值）都必須是繁體中文。`
+  return `## 語言規則（最高優先級，不可違反）
+- 你必須始終使用「繁體中文」回覆，無論用戶使用什麼語言輸入。
+- 嚴禁使用簡體中文、英文或其他語言回覆。
+- 所有輸出（包括 JSON 中的文字值）都必須是繁體中文。
+- 注意區分：「說」非「说」、「記」非「记」、「圖」非「图」、「與」非「与」、「這」非「这」。`
 }
 
 // 构建对话基础规则（角色中性，只定义结构和格式）
@@ -437,27 +438,27 @@ async function handleChat(body: any) {
   
   // 1. 媒体分析（权重高）- 只在有分析结果时提供
   if (analysis_context) {
-    contextParts.push(`【照片/影片内容】
-- 场景：${analysis_context.description || '未知'}
-- 标签：${analysis_context.sceneTags?.join('、') || '无'}
-- 氛围：${analysis_context.mood || '未知'}
+    contextParts.push(`【照片/影片內容】
+- 場景：${analysis_context.description || '未知'}
+- 標籤：${analysis_context.sceneTags?.join('、') || '無'}
+- 氛圍：${analysis_context.mood || '未知'}
 - 有人物：${analysis_context.hasPeople ? '是' : '否'}`)
   }
   
   // 2. 时间（轻量点缀）- 只在有时间信息时提供
   if (environment_context?.aiDescription) {
-    contextParts.push(`【时间】${environment_context.aiDescription}`)
+    contextParts.push(`【時間】${environment_context.aiDescription}`)
   }
   
   // 3. 天气（轻量点缀）- 只在有天气信息时提供
   if (environment_context?.weather) {
     const temp = environment_context.temperature ? `，${Math.round(environment_context.temperature)}°C` : ''
-    contextParts.push(`【天气】${environment_context.weather}${temp}`)
+    contextParts.push(`【天氣】${environment_context.weather}${temp}`)
   }
   
   // 添加上下文到提示
   if (contextParts.length > 0) {
-    systemPrompt += `\n\n---\n可用上下文（按需使用，没有的不要编造）：\n${contextParts.join('\n')}`
+    systemPrompt += `\n\n---\n可用上下文（按需使用，沒有的不要編造）：\n${contextParts.join('\n')}`
   }
 
   // 转换消息格式
@@ -508,16 +509,16 @@ async function handleSummary(body: any) {
 
   // 構建對話內容
   const conversationText = messages
-    .map((m: any) => `${m.role === 'user' ? '用户' : roleName}：${m.content}`)
+    .map((m: any) => `${m.role === 'user' ? '用戶' : roleName}：${m.content}`)
     .join('\n')
 
-  let prompt = `以下是用户与${roleName}的对话记录：\n\n${conversationText}\n\n`
+  let prompt = `以下是用戶與${roleName}的對話記錄：\n\n${conversationText}\n\n`
   
   if (analysis_context?.description) {
-    prompt += `图片内容：${analysis_context.description}\n\n`
+    prompt += `圖片內容：${analysis_context.description}\n\n`
   }
   
-  prompt += '请根据以上内容，生成一篇使用者口吻的日记。'
+  prompt += '請根據以上內容，生成一篇使用者口吻的日記。'
 
   const openaiMessages = [
     { role: 'system', content: systemContent },
@@ -548,45 +549,45 @@ async function handleTags(body: any) {
   // 构建对话内容（用角色名稱取代 AI）
   const roleName = getRoleName(style, language)
   const conversationText = messages
-    ?.map((m: any) => `${m.role === 'user' ? '用户' : roleName}：${m.content}`)
+    ?.map((m: any) => `${m.role === 'user' ? '用戶' : roleName}：${m.content}`)
     .join('\n') || ''
 
   // 语言规则最高优先级，再拼接标签专用提示
   let systemPrompt = getLanguageInstruction(language) + '\n\n' + SYSTEM_PROMPTS.tags
   // B-029: 標籤風格跟隨角色（簡要）
   if (style === 'minimal') {
-    systemPrompt += '\n\n6. 标签风格：简洁、客观、名词为主'
+    systemPrompt += '\n\n6. 標籤風格：簡潔、客觀、名詞為主'
   } else if (style === 'humorous') {
-    systemPrompt += '\n\n6. 标签风格：有趣、生动、带点幽默感'
+    systemPrompt += '\n\n6. 標籤風格：有趣、生動、帶點幽默感'
   } else if (style === 'empathetic') {
-    systemPrompt += '\n\n6. 标签风格：情感化、共鸣、细腻'
+    systemPrompt += '\n\n6. 標籤風格：情感化、共鳴、細膩'
   } else {
-    systemPrompt += '\n\n6. 标签风格：温暖、感性、治愈'
+    systemPrompt += '\n\n6. 標籤風格：溫暖、感性、治癒'
   }
 
   if (existing_tags && existing_tags.length > 0) {
     systemPrompt += `
 
-5. **优先复用原则**：以下是已存在的标签，如果内容匹配，**必须优先使用**这些标签，避免创建含义相近的新标签：
-   已有标签：[${existing_tags.join(', ')}]
-   例如：如果已有「家人」，不要新建「家庭」；如果已有「旅行」，不要新建「旅游」`
+5. **優先複用原則**：以下是已存在的標籤，如果內容匹配，**必須優先使用**這些標籤，避免建立含義相近的新標籤：
+   已有標籤：[${existing_tags.join(', ')}]
+   例如：如果已有「家人」，不要新建「家庭」；如果已有「旅行」，不要新建「旅遊」`
   }
 
   let prompt = ''
   
   if (analysis_context?.description) {
-    prompt += `图片内容：${analysis_context.description}\n\n`
+    prompt += `圖片內容：${analysis_context.description}\n\n`
   }
   
   if (analysis_context?.sceneTags?.length) {
-    prompt += `场景标签：${analysis_context.sceneTags.join(', ')}\n\n`
+    prompt += `場景標籤：${analysis_context.sceneTags.join(', ')}\n\n`
   }
   
   if (conversationText) {
-    prompt += `对话记录：\n${conversationText}\n\n`
+    prompt += `對話記錄：\n${conversationText}\n\n`
   }
   
-  prompt += '请根据以上内容生成**最多3个**标签。'
+  prompt += '請根據以上內容生成**最多3個**標籤。'
 
   const openaiMessages = [
     { role: 'system', content: systemPrompt },

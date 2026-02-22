@@ -91,10 +91,10 @@ struct InputAreaView: View {
         .padding(.vertical, 12)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color.red.opacity(0.1))
+                .fill(Theme.accent.opacity(0.1))
                 .overlay(
                     RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.red.opacity(0.3), lineWidth: 0.5)
+                        .stroke(Theme.accent.opacity(0.3), lineWidth: 0.5)
                 )
         )
     }
@@ -116,14 +116,14 @@ struct InputAreaView: View {
             ZStack {
                 // 外圈 - 极简线条
                 Circle()
-                    .stroke(isRecording ? Color.red.opacity(0.5) : Theme.textSecondary.opacity(0.3), lineWidth: 1)
+                    .stroke(isRecording ? Theme.accent.opacity(0.5) : Theme.textSecondary.opacity(0.3), lineWidth: 1)
                     .background(Circle().fill(Color.black.opacity(0.2))) // 深色底增强对比
                     .frame(width: 48, height: 48)
                 
                 // 图标 - 线性风格 (Thin stroke)
                 Image(systemName: isRecording ? "stop.fill" : "mic")
                     .font(.system(size: 20, weight: .light)) // Thin/Light weight
-                    .foregroundColor(isRecording ? .red : Theme.textSecondary)
+                    .foregroundColor(isRecording ? Theme.accent : Theme.textSecondary)
             }
         }
         .buttonStyle(.plain)
@@ -145,7 +145,7 @@ struct InputAreaView: View {
             .placeholder(when: inputText.isEmpty && isRecording) {
                 Text(String.localized(.listening))
                     .font(.system(size: 14, weight: .regular))
-                    .foregroundColor(Color.red.opacity(0.6))
+                    .foregroundColor(Theme.accent.opacity(0.6))
             }
             .font(.system(size: 14, weight: .regular))
             .textFieldStyle(.plain)
@@ -265,7 +265,7 @@ struct WaveformBar: View {
     
     var body: some View {
         RoundedRectangle(cornerRadius: 2)
-            .fill(Color.red.opacity(0.8))
+            .fill(Theme.accent.opacity(0.8))
             .frame(width: 4, height: height)
             .animation(.easeInOut(duration: 0.1), value: height)
     }
@@ -280,7 +280,7 @@ struct RecordingDurationView: View {
     var body: some View {
         Text(formatDuration(duration))
             .font(.system(size: 12, weight: .medium, design: .monospaced))
-            .foregroundColor(Color.red)
+            .foregroundColor(Theme.accent)
             .onAppear {
                 startTimer()
             }
