@@ -21,7 +21,7 @@ struct ChatOverlayView: View {
     var onSelectPrompt: ((String) -> Void)? = nil  // 点击建议话题
     
     /// 显示的最大消息数
-    private let maxVisibleMessages = 3
+    private let maxVisibleMessages = 1
     
     var body: some View {
         VStack(spacing: 8) {
@@ -53,13 +53,9 @@ struct ChatOverlayView: View {
                 suggestedPromptsView
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
-            
-            // 展开提示（当有更多消息时）
-            if messages.count > maxVisibleMessages {
-                expandHint
-            }
         }
         .frame(maxWidth: 280)
+        .offset(y: 80)
         .animation(.spring(response: 0.4, dampingFraction: 0.7), value: messages.count)
         .animation(.easeInOut(duration: 0.2), value: isAITyping)
         .animation(.easeInOut(duration: 0.3), value: suggestedPrompts)
@@ -136,53 +132,49 @@ struct ChatBubble: View {
     
     var body: some View {
         HStack {
-            if message.sender == .user {
-                Spacer(minLength: isCompact ? 20 : 40)
+            if !isCompact {
+                if message.sender == .user { Spacer(minLength: 40) }
             }
             
             Text(message.content)
                 .font(.system(size: isCompact ? 13 : 15, weight: .medium))
-                .foregroundColor(Theme.textPrimary)
-                .lineLimit(nil)  // 不限制行数，显示完整消息
-                .fixedSize(horizontal: false, vertical: true)  // 允许垂直扩展
+                .foregroundColor(.white)
+                .lineLimit(isCompact ? 3 : nil)
+                .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, isCompact ? 14 : 16)
                 .padding(.vertical, isCompact ? 10 : 12)
                 .background(
-                    ZStack {
-                        RoundedRectangle(cornerRadius: isCompact ? 16 : 20)
-                            .fill(.ultraThinMaterial)
-                        RoundedRectangle(cornerRadius: isCompact ? 16 : 20)
-                            .fill(bubbleTint(for: message.sender))
-                    }
+                    RoundedRectangle(cornerRadius: isCompact ? 16 : 20)
+                        .fill(bubbleTint(for: message.sender))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: isCompact ? 16 : 20)
                         .stroke(bubbleBorder(for: message.sender), lineWidth: 0.5)
                 )
-                .shadow(color: Color.black.opacity(0.2), radius: isCompact ? 4 : 6, x: 0, y: 2)
+                .shadow(color: Color.black.opacity(0.3), radius: isCompact ? 4 : 6, x: 0, y: 2)
             
-            if message.sender == .ai {
-                Spacer(minLength: isCompact ? 20 : 40)
+            if !isCompact {
+                if message.sender == .ai { Spacer(minLength: 40) }
             }
         }
+        .frame(maxWidth: .infinity)
     }
     
-    /// 半透明 tint，叠加在 material 上，保留背景图片可见性
     private func bubbleTint(for sender: ChatSender) -> Color {
         switch sender {
         case .user:
-            return Theme.accent.opacity(0.18)
+            return Theme.accent.opacity(isCompact ? 0.35 : 0.18)
         case .ai:
-            return Color.black.opacity(0.25)
+            return Color.black.opacity(isCompact ? 0.55 : 0.25)
         }
     }
     
     private func bubbleBorder(for sender: ChatSender) -> Color {
         switch sender {
         case .user:
-            return Theme.accent.opacity(0.6)
+            return Theme.accent.opacity(isCompact ? 0.4 : 0.6)
         case .ai:
-            return Color.white.opacity(0.3)
+            return Color.white.opacity(isCompact ? 0.15 : 0.3)
         }
     }
 }

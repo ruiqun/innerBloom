@@ -53,9 +53,9 @@ struct innerBloomApp: App {
                 if oldState == .unauthenticated && newState == .authenticated && isSplashDone {
                     print("[App] 🔑 Manual login detected, reloading data...")
                     HomeViewModel.shared.reloadAfterLogin()
-                    environmentService.onAppBecomeActive()
-                    IAPManager.shared.loadCachedStatus()
                     Task {
+                        environmentService.onAppBecomeActive()
+                        IAPManager.shared.loadCachedStatus()
                         // B-033: 登入後重試待上報 + 從後端同步帳號 Premium
                         await SubscriptionSyncService.shared.retryPendingReports()
                         await IAPManager.shared.syncPremiumStatus()
@@ -88,20 +88,14 @@ struct innerBloomApp: App {
         // 2. 若已登入 → 並行預載資料（Splash 期間完成，進入主頁即有資料）
         if authManager.authState == .authenticated {
             print("[App] ✅ Session valid, preloading data during splash...")
-            await withTaskGroup(of: Void.self) { group in
-                group.addTask {
-                    await HomeViewModel.shared.preloadData()
-                }
-                group.addTask {
-                    EnvironmentService.shared.onAppBecomeActive()
-                }
-                group.addTask {
-                    // B-033: 啟動時重試待上報 + 帳號級別 Premium 同步
-                    await SubscriptionSyncService.shared.retryPendingReports()
-                    IAPManager.shared.loadCachedStatus()
-                    await IAPManager.shared.syncPremiumStatus()
-                }
+            await HomeViewModel.shared.preloadData()
+            await MainActor.run {
+                environmentService.onAppBecomeActive()
+                IAPManager.shared.loadCachedStatus()
             }
+            // B-033: 啟動時重試待上報 + 帳號級別 Premium 同步
+            await SubscriptionSyncService.shared.retryPendingReports()
+            await IAPManager.shared.syncPremiumStatus()
         }
         
         // 3. 確保 Splash 至少顯示 minimumSplashDuration
@@ -153,13 +147,16 @@ struct innerBloomApp: App {
         case .active:
             if oldPhase != .active {
                 print("[App] 📱 App became active (from \(oldPhase))")
-                environmentService.onAppBecomeActive()
-                Task { await IAPManager.shared.syncPremiumStatus() }
+                Task {
+                    environmentService.onAppBecomeActive()
+                    await IAPManager.shared.syncPremiumStatus()
+                }
             }
         case .inactive:
             print("[App] 📱 App became inactive")
         case .background:
             print("[App] 📱 App entered background")
+            LocalMediaManager.shared.flushAccessLog()
         @unknown default:
             break
         }

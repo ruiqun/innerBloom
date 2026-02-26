@@ -142,10 +142,21 @@ struct DiaryListItemView: View {
     
     let entry: DiaryEntry
     let onRetry: ((DiaryEntry) -> Void)?  // B-015: 重试回调
+    @State private var thumbnailImage: UIImage?
     
     init(entry: DiaryEntry, onRetry: ((DiaryEntry) -> Void)? = nil) {
         self.entry = entry
         self.onRetry = onRetry
+        
+        let mgr = LocalMediaManager.shared
+        var thumb: UIImage? = nil
+        if let tp = entry.thumbnailPath {
+            thumb = mgr.thumbnailFromMemory(forPath: tp)
+        }
+        if thumb == nil, let p = entry.localMediaPath {
+            thumb = mgr.thumbnailFromMemory(forPath: p)
+        }
+        _thumbnailImage = State(initialValue: thumb)
     }
     
     /// 是否正在处理中
@@ -171,6 +182,28 @@ struct DiaryListItemView: View {
             // B-015: 失败状态遮罩（带重试按钮）
             if isFailed && !isProcessing {
                 failedOverlay
+            }
+        }
+        .task(id: entry.id) {
+            guard thumbnailImage == nil else { return }
+            
+            let mgr = LocalMediaManager.shared
+            
+            if let tp = entry.thumbnailPath,
+               let img = mgr.cachedImage(forPath: tp) {
+                thumbnailImage = img
+                return
+            }
+            if let p = entry.localMediaPath,
+               let img = mgr.cachedImage(forPath: p) {
+                thumbnailImage = img
+                return
+            }
+            
+            let localPath = entry.thumbnailPath ?? entry.localMediaPath ?? "DiaryMedia/\(entry.id.uuidString).jpg"
+            if let urlStr = entry.cloudThumbnailURL ?? entry.cloudMediaURL {
+                let _ = await mgr.downloadAndCache(from: urlStr, toRelativePath: localPath)
+                thumbnailImage = mgr.cachedImage(forPath: localPath)
             }
         }
     }
@@ -318,34 +351,12 @@ struct DiaryListItemView: View {
     
     private var thumbnailView: some View {
         ZStack {
-            if let image = loadThumbnail() {
-                Image(uiImage: image)
+            if let thumbnailImage {
+                Image(uiImage: thumbnailImage)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
                     .frame(width: 56, height: 56)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
-            } else if let urlString = entry.cloudThumbnailURL ?? entry.cloudMediaURL,
-                      let url = URL(string: urlString) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                    case .failure, .empty:
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.white.opacity(0.1))
-                            .overlay(
-                                Image(systemName: entry.mediaType == .photo ? "photo" : "video")
-                                    .font(.title3)
-                                    .foregroundColor(Theme.textSecondary)
-                            )
-                    @unknown default:
-                        RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.1))
-                    }
-                }
-                .frame(width: 56, height: 56)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
             } else {
                 RoundedRectangle(cornerRadius: 12)
                     .fill(Color.white.opacity(0.1))
@@ -357,26 +368,6 @@ struct DiaryListItemView: View {
                     )
             }
         }
-    }
-    
-    private func loadThumbnail() -> UIImage? {
-        // 1. 尝试加载本地缩略图
-        if let thumbPath = entry.thumbnailPath {
-            let fullPath = LocalMediaManager.shared.getDocumentsDirectory().appendingPathComponent(thumbPath).path
-            if let image = UIImage(contentsOfFile: fullPath) {
-                return image
-            }
-        }
-        
-        // 2. 尝试加载本地原图
-        if let path = entry.localMediaPath {
-            let fullPath = LocalMediaManager.shared.getDocumentsDirectory().appendingPathComponent(path).path
-            if let image = UIImage(contentsOfFile: fullPath) {
-                return image
-            }
-        }
-        
-        return nil
     }
 }
 

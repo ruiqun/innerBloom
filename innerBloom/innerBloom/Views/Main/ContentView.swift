@@ -49,13 +49,14 @@ struct ContentView: View {
                 .blendMode(.overlay)
                 .ignoresSafeArea()
             
-            // 内容区域：僅瀏覽模式忽略底部安全區；建立模式保留鍵盤安全區，避免輸入時對話被鍵盤蓋住
-            VStack {
-                if viewModel.currentMode == .browsing {
-                    browsingModeView
-                        .ignoresSafeArea(edges: .bottom)
-                        .transition(.opacity.combined(with: .move(edge: .leading)))
-                } else {
+            // 内容区域：瀏覽模式始終保留在視圖樹中（隱藏即可），避免返回時縮圖重新加載
+            ZStack {
+                browsingModeView
+                    .ignoresSafeArea(edges: .bottom)
+                    .opacity(viewModel.currentMode == .browsing ? 1 : 0)
+                    .allowsHitTesting(viewModel.currentMode == .browsing)
+                
+                if viewModel.currentMode != .browsing {
                     creatingModeView
                         .transition(.opacity.combined(with: .move(edge: .trailing)))
                 }

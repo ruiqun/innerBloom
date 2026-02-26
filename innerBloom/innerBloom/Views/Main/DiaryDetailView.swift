@@ -18,10 +18,29 @@ struct DiaryDetailView: View {
     @State private var showFullChat = false
     @State private var isPlayingVideo = false
     @State private var player: AVPlayer?
+    @State private var headerImage: UIImage?
     
     // 注入 ViewModel 以处理标签跳转
     var onTagSelected: ((Tag) -> Void)?
     var onDelete: (() -> Void)?
+    
+    init(entry: DiaryEntry, onTagSelected: ((Tag) -> Void)? = nil, onDelete: (() -> Void)? = nil) {
+        self.entry = entry
+        self.onTagSelected = onTagSelected
+        self.onDelete = onDelete
+        
+        let mgr = LocalMediaManager.shared
+        var image: UIImage? = nil
+        if entry.mediaType != .video {
+            if let path = entry.localMediaPath {
+                image = mgr.fullImageFromMemory(forPath: path)
+            }
+            if image == nil, let tp = entry.thumbnailPath {
+                image = mgr.fullImageFromMemory(forPath: tp)
+            }
+        }
+        _headerImage = State(initialValue: image)
+    }
     
     var body: some View {
         ZStack(alignment: .top) {
@@ -80,6 +99,27 @@ struct DiaryDetailView: View {
         .onDisappear {
             player?.pause()
         }
+        .task {
+            guard headerImage == nil, entry.mediaType != .video else { return }
+            
+            let mgr = LocalMediaManager.shared
+            
+            if let path = entry.localMediaPath,
+               let img = mgr.cachedFullImage(forPath: path) {
+                headerImage = img
+                return
+            }
+            if let thumbPath = entry.thumbnailPath,
+               let img = mgr.cachedFullImage(forPath: thumbPath) {
+                headerImage = img
+                return
+            }
+            
+            let localPath = entry.localMediaPath ?? "DiaryMedia/\(entry.id.uuidString).jpg"
+            if let urlStr = entry.cloudMediaURL ?? entry.cloudThumbnailURL {
+                headerImage = await mgr.downloadAndCache(from: urlStr, toRelativePath: localPath)
+            }
+        }
     }
     
     // MARK: - Subviews
@@ -106,38 +146,15 @@ struct DiaryDetailView: View {
                                 toggleVideoPlayback()
                             }
                         )
-                } else if let image = loadHeaderImage() {
-                    // 图片展示（本地）
-                    Image(uiImage: image)
+                } else if let headerImage {
+                    Image(uiImage: headerImage)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
-                } else if let urlString = entry.cloudMediaURL ?? entry.cloudThumbnailURL,
-                          let url = URL(string: urlString) {
-                    // 真機／換設備：無本地檔時從雲端 URL 載入
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                        case .failure:
-                            Rectangle()
-                                .fill(Theme.surface)
-                                .overlay(
-                                    Image(systemName: "photo")
-                                        .font(.largeTitle)
-                                        .foregroundColor(Theme.textSecondary)
-                                )
-                        case .empty:
-                            Rectangle()
-                                .fill(Theme.surface)
-                                .overlay(ProgressView().tint(Theme.textSecondary))
-                        @unknown default:
-                            Rectangle().fill(Theme.surface)
-                        }
-                    }
+                } else if entry.localMediaPath != nil || entry.cloudMediaURL != nil || entry.cloudThumbnailURL != nil {
+                    Rectangle()
+                        .fill(Theme.surface)
+                        .overlay(ProgressView().tint(Theme.textSecondary))
                 } else {
-                    // 占位图
                     Rectangle()
                         .fill(Theme.surface)
                         .overlay(
@@ -299,27 +316,6 @@ struct DiaryDetailView: View {
     }
     
     // MARK: - Helper Methods
-    
-    /// 加载头部图片（优先本地，其次缩略图）
-    private func loadHeaderImage() -> UIImage? {
-        // 1. 尝试加载本地原图
-        if let path = entry.localMediaPath {
-            let fullPath = LocalMediaManager.shared.getDocumentsDirectory().appendingPathComponent(path).path
-            if let image = UIImage(contentsOfFile: fullPath) {
-                return image
-            }
-        }
-        
-        // 2. 尝试加载本地缩略图
-        if let thumbPath = entry.thumbnailPath {
-            let fullPath = LocalMediaManager.shared.getDocumentsDirectory().appendingPathComponent(thumbPath).path
-            if let image = UIImage(contentsOfFile: fullPath) {
-                return image
-            }
-        }
-        
-        return nil
-    }
     
     /// 设置视频播放器（支援本地路徑或雲端 URL）
     private func setupVideoPlayer() {

@@ -66,10 +66,20 @@ enum AIServiceError: LocalizedError {
     }
 }
 
+// MARK: - AI 分析请求（发送给后端的格式）
+
+private struct AIAnalyzeRequest: Codable {
+    let image_base64: String
+    let media_type: String
+    let user_context: String?
+    let language: String?
+    let is_premium: Bool?
+}
+
 // MARK: - AI 分析结果 (D-004)
 
 /// AI 对媒体内容的分析结果
-struct AIAnalysisResult: Codable {
+struct AIAnalysisResult: Codable, Sendable {
     /// 原始描述（AI 看到了什么）
     let description: String
     
@@ -374,31 +384,23 @@ final class AIService: AIServiceProtocol {
         let userLanguage = await MainActor.run { SettingsManager.shared.appLanguage.rawValue }
         let isPremium = await MainActor.run { IAPManager.shared.premiumStatus.isPremium }
         
-        struct AnalyzeRequest: Codable {
-            let image_base64: String
-            let media_type: String
-            let user_context: String?
-            let language: String?
-            let is_premium: Bool?
-        }
-        
-        let httpBody: Data = try await Task.detached(priority: .userInitiated) {
+        let base64Image: String = await Task.detached(priority: .userInitiated) {
             let b64Start = CFAbsoluteTimeGetCurrent()
-            let base64Image = capturedImageData.base64EncodedString()
-            print("[AIService] 🔍 BG Base64 encode: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - b64Start) * 1000))ms, \(capturedImageData.count / 1024)KB → \(base64Image.count / 1024)KB")
-            
-            let jsonStart = CFAbsoluteTimeGetCurrent()
-            let analyzeRequest = AnalyzeRequest(
-                image_base64: base64Image,
-                media_type: capturedMediaType.rawValue,
-                user_context: capturedUserContext,
-                language: userLanguage,
-                is_premium: isPremium
-            )
-            let body = try JSONEncoder().encode(analyzeRequest)
-            print("[AIService] 🔍 BG JSON encode: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - jsonStart) * 1000))ms, body: \(body.count / 1024)KB")
-            return body
+            let base64 = capturedImageData.base64EncodedString()
+            print("[AIService] 🔍 BG Base64 encode: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - b64Start) * 1000))ms, \(capturedImageData.count / 1024)KB → \(base64.count / 1024)KB")
+            return base64
         }.value
+        
+        let jsonStart = CFAbsoluteTimeGetCurrent()
+        let analyzeRequest = AIAnalyzeRequest(
+            image_base64: base64Image,
+            media_type: capturedMediaType.rawValue,
+            user_context: capturedUserContext,
+            language: userLanguage,
+            is_premium: isPremium
+        )
+        let httpBody = try JSONEncoder().encode(analyzeRequest)
+        print("[AIService] 🔍 JSON encode: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - jsonStart) * 1000))ms, body: \(httpBody.count / 1024)KB")
         
         request.httpBody = httpBody
         let prepTime = CFAbsoluteTimeGetCurrent() - prepStart
@@ -407,7 +409,7 @@ final class AIService: AIServiceProtocol {
         // 6. 发送请求（B-020: 自动重试）
         let networkStart = CFAbsoluteTimeGetCurrent()
         let capturedRequest = request
-        let result: AIAnalysisResult = try await RetryHelper.withRetry(config: .ai) { [self] in
+        let responseData: Data = try await RetryHelper.withRetry(config: .ai) { [self] in
             do {
                 let (data, response) = try await self.urlSession.data(for: capturedRequest)
                 
@@ -420,12 +422,10 @@ final class AIService: AIServiceProtocol {
                     throw AIServiceError.serverError(statusCode: httpResponse.statusCode, message: errorMessage)
                 }
                 
-                return try JSONDecoder().decode(AIAnalysisResult.self, from: data)
+                return data
                 
             } catch let error as AIServiceError {
                 throw error
-            } catch let error as DecodingError {
-                throw AIServiceError.decodingError(error)
             } catch {
                 if (error as NSError).code == NSURLErrorCancelled {
                     throw AIServiceError.cancelled
@@ -435,6 +435,13 @@ final class AIService: AIServiceProtocol {
                 }
                 throw AIServiceError.uploadFailed(error)
             }
+        }
+        
+        let result: AIAnalysisResult
+        do {
+            result = try JSONDecoder().decode(AIAnalysisResult.self, from: responseData)
+        } catch let error as DecodingError {
+            throw AIServiceError.decodingError(error)
         }
         
         let networkTime = CFAbsoluteTimeGetCurrent() - networkStart
@@ -1657,12 +1664,12 @@ extension AIService {
     ) async throws -> AIAnalysisResult {
         let startTime = CFAbsoluteTimeGetCurrent()
         
+        let resizeStart = CFAbsoluteTimeGetCurrent()
+        let maxDimension: CGFloat = 768
+        let resizedImage = self.resizeImageIfNeeded(image, maxDimension: maxDimension)
+        print("[AIService] 🔍 resize: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - resizeStart) * 1000))ms, \(Int(image.size.width))x\(Int(image.size.height)) → \(Int(resizedImage.size.width))x\(Int(resizedImage.size.height))")
+        
         let finalData: Data = try await Task.detached(priority: .userInitiated) {
-            let resizeStart = CFAbsoluteTimeGetCurrent()
-            let maxDimension: CGFloat = 768
-            let resizedImage = self.resizeImageIfNeeded(image, maxDimension: maxDimension)
-            print("[AIService] 🔍 BG resize: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - resizeStart) * 1000))ms, \(Int(image.size.width))x\(Int(image.size.height)) → \(Int(resizedImage.size.width))x\(Int(resizedImage.size.height))")
-            
             let compressStart = CFAbsoluteTimeGetCurrent()
             let maxSize = 500 * 1024
             guard var data = resizedImage.jpegData(compressionQuality: 0.6) else {

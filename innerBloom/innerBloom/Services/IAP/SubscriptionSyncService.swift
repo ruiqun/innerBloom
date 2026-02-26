@@ -57,7 +57,7 @@ final class SubscriptionSyncService {
             productId: transaction.productID,
             purchaseDate: transaction.originalPurchaseDate,
             expiresAt: transaction.expirationDate,
-            isInTrial: transaction.offerType == .introductory,
+            isInTrial: transaction.offer?.type == .introductory,
             environment: transaction.environment.rawValue
         )
         
@@ -193,7 +193,7 @@ final class SubscriptionSyncService {
         
         do {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
-            let (data, response) = try await session.data(for: request)
+            let (_, response) = try await session.data(for: request)
             
             guard let httpResponse = response as? HTTPURLResponse else {
                 return .retryableFailure

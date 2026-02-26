@@ -1389,9 +1389,7 @@ final class HomeViewModel {
             )
             
             let draftSaveStart = CFAbsoluteTimeGetCurrent()
-            try await Task.detached(priority: .utility) { [draftManager] in
-                try draftManager.saveDraft(draft)
-            }.value
+            try draftManager.saveDraft(draft)
             print("[HomeViewModel] 🔍 draftManager.saveDraft: \(String(format: "%.0f", (CFAbsoluteTimeGetCurrent() - draftSaveStart) * 1000))ms")
             
             await MainActor.run {
