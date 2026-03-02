@@ -21,6 +21,10 @@ struct SettingsView: View {
     @Bindable private var authManager = AuthManager.shared  // B-018
     @Bindable private var iapManager = IAPManager.shared    // B-023
     @State private var showLogoutConfirm = false  // B-018
+    @State private var showDeleteAccountConfirm = false
+    @State private var showDeleteAccountSuccess = false
+    @State private var showDeleteAccountError: String?
+    @State private var isDeletingAccount = false
     @State private var showPremium = false        // B-023
     @State private var showCompanionRoleSheet = false  // B-029 S-007
     
@@ -35,9 +39,6 @@ struct SettingsView: View {
                 
                 ScrollView {
                     VStack(spacing: 24) {
-                        // B-018: 帐号区块
-                        accountSection
-                        
                         // B-023: Premium 入口
                         premiumSection
                         
@@ -60,6 +61,9 @@ struct SettingsView: View {
                         if DevConfig.isDevelopmentMode {
                             developerSection
                         }
+                        
+                        // 帐号区块（放在最下方）
+                        accountSection
                         
                         // 底部留白
                         Spacer()
@@ -97,6 +101,31 @@ struct SettingsView: View {
             }
         } message: {
             Text(String.localized(.logoutConfirmDesc))
+        }
+        .alert(String.localized(.deleteAccountConfirmTitle), isPresented: $showDeleteAccountConfirm) {
+            Button(String.localized(.cancel), role: .cancel) { }
+            Button(String.localized(.deleteAccount), role: .destructive) {
+                performDeleteAccount()
+            }
+        } message: {
+            Text(String.localized(.deleteAccountConfirmMessage))
+        }
+        .alert(String.localized(.deleteAccountSuccess), isPresented: $showDeleteAccountSuccess) {
+            Button(String.localized(.confirm)) {
+                HomeViewModel.shared.resetForLogout()
+                LocalMediaManager.shared.clearAllMedia()
+                Task { await authManager.signOut() }
+            }
+        } message: {
+            Text(String.localized(.deleteAccountSuccessMessage))
+        }
+        .alert(String.localized(.hint), isPresented: Binding(
+            get: { showDeleteAccountError != nil },
+            set: { if !$0 { showDeleteAccountError = nil } }
+        )) {
+            Button(String.localized(.confirm)) { showDeleteAccountError = nil }
+        } message: {
+            if let msg = showDeleteAccountError { Text(msg) }
         }
     }
     
@@ -172,6 +201,24 @@ struct SettingsView: View {
                         }
                         .padding(.vertical, 4)
                     }
+                    
+                    Divider()
+                        .background(Color.white.opacity(0.1))
+                    
+                    // 刪除帳號按鈕
+                    Button(action: { showDeleteAccountConfirm = true }) {
+                        HStack {
+                            Image(systemName: "person.crop.circle.badge.minus")
+                                .font(.system(size: 14))
+                                .foregroundColor(.red.opacity(0.8))
+                            Text(String.localized(.deleteAccount))
+                                .font(.system(size: 15))
+                                .foregroundColor(.red.opacity(0.8))
+                            Spacer()
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    .disabled(isDeletingAccount)
                 }
             }
         }
@@ -241,8 +288,24 @@ struct SettingsView: View {
         }
     }
     
-    // MARK: - AI 设定（B-029: 陪伴角色）
-    
+    private func performDeleteAccount() {
+        Task {
+            await MainActor.run { isDeletingAccount = true }
+            do {
+                try await authManager.deleteAccount()
+                await MainActor.run {
+                    isDeletingAccount = false
+                    showDeleteAccountSuccess = true
+                }
+            } catch {
+                await MainActor.run {
+                    isDeletingAccount = false
+                    showDeleteAccountError = error.localizedDescription
+                }
+            }
+        }
+    }
+
     private var aiSection: some View {
         SettingsSection(title: String.localized(.aiAssistant), icon: "sparkles") {
             VStack(spacing: 16) {

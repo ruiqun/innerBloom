@@ -140,7 +140,8 @@ struct ChatBubble: View {
                 .font(.system(size: isCompact ? 13 : 15, weight: .medium))
                 .foregroundColor(.white)
                 .lineLimit(isCompact ? 3 : nil)
-                .fixedSize(horizontal: false, vertical: true)
+                .truncationMode(.tail)
+                .fixedSize(horizontal: false, vertical: !isCompact)
                 .padding(.horizontal, isCompact ? 14 : 16)
                 .padding(.vertical, isCompact ? 10 : 12)
                 .background(

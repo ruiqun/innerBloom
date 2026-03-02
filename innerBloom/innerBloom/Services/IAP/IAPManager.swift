@@ -102,6 +102,7 @@ final class IAPManager {
     }
     
     /// 取得快取的產品資訊（供 S-005 顯示）
+    /// 所有幣別（含 TWD）皆直接使用 Apple IAP 回傳的 displayPrice
     var productInfos: [PremiumProductInfo] {
         products.map { product in
             let isYearly = product.id == yearlyProductId

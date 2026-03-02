@@ -379,6 +379,61 @@ final class AuthManager {
         print("[AuthManager] OTP verified, logged in as: \(trimmedEmail)")
     }
     
+    /// 验证注册 OTP（type=signup），验证通过后自动取得 Session 登入
+    func verifySignUpOTP(email: String, otp: String) async throws {
+        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let trimmedOTP = otp.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        guard !trimmedOTP.isEmpty else {
+            throw AuthError.invalidOTP
+        }
+        
+        guard config.isConfigured else {
+            throw AuthError.notConfigured
+        }
+        
+        guard let authURL = config.authURL else {
+            throw AuthError.invalidURL
+        }
+        
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
+        
+        let url = authURL.appendingPathComponent("verify")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let body: [String: Any] = [
+            "email": trimmedEmail,
+            "token": trimmedOTP,
+            "type": "signup"
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        
+        let (data, response) = try await performRequest(request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw AuthError.networkError("無法連接到伺服器")
+        }
+        
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let errorMsg = parseErrorMessage(from: data)
+            print("[AuthManager] Verify signup OTP failed: \(httpResponse.statusCode) - \(errorMsg)")
+            if errorMsg.lowercased().contains("expired") {
+                throw AuthError.serverError(httpResponse.statusCode, String.localized(.otpExpired))
+            } else {
+                throw AuthError.invalidOTP
+            }
+        }
+        
+        let authSession = try parseTokenResponse(data: data, email: trimmedEmail)
+        saveSession(authSession)
+        print("[AuthManager] Signup OTP verified, logged in as: \(trimmedEmail)")
+    }
+    
     // MARK: - Email + Password Flow
     
     /// 用 Email + 密码注册
@@ -429,8 +484,54 @@ final class AuthManager {
             throw AuthError.serverError(httpResponse.statusCode, errorMsg)
         }
         
-        // 注册成功 → 不自动登入，让用户手动登入
-        print("[AuthManager] Signed up successfully: \(trimmedEmail), redirecting to sign-in")
+        if let raw = String(data: data, encoding: .utf8) {
+            print("[AuthManager] Sign up response: \(raw.prefix(500))")
+        }
+        print("[AuthManager] Signed up successfully: \(trimmedEmail), awaiting email verification")
+    }
+    
+    /// 重新发送注册确认邮件（使用 /auth/v1/resend）
+    func resendSignUpConfirmation(email: String) async throws {
+        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        
+        guard config.isConfigured else {
+            throw AuthError.notConfigured
+        }
+        guard let authURL = config.authURL else {
+            throw AuthError.invalidURL
+        }
+        
+        isLoading = true
+        defer { isLoading = false }
+        
+        let url = authURL.appendingPathComponent("resend")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let body: [String: Any] = [
+            "type": "signup",
+            "email": trimmedEmail
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        
+        let (data, response) = try await performRequest(request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw AuthError.networkError("無法連接到伺服器")
+        }
+        
+        if let raw = String(data: data, encoding: .utf8) {
+            print("[AuthManager] Resend response (\(httpResponse.statusCode)): \(raw.prefix(300))")
+        }
+        
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let errorMsg = parseErrorMessage(from: data)
+            throw AuthError.serverError(httpResponse.statusCode, errorMsg)
+        }
+        
+        print("[AuthManager] Resent signup confirmation to: \(trimmedEmail)")
     }
     
     /// 用 Email + 密码登入
@@ -513,6 +614,69 @@ final class AuthManager {
         }
         
         print("[AuthManager] Signed out successfully")
+    }
+    
+    // MARK: - Delete Account
+    
+    /// 刪除帳號：呼叫 Edge Function 刪除雲端資料與 Auth 用戶，成功後需自行 signOut 並清除本機資料
+    func deleteAccount() async throws {
+        guard config.isConfigured else {
+            throw AuthError.notConfigured
+        }
+        guard !config.projectURL.isEmpty else {
+            throw AuthError.invalidURL
+        }
+        guard let token = await getValidAccessToken() else {
+            throw AuthError.noSession
+        }
+        
+        let urlString = "\(config.projectURL)/functions/v1/delete-account"
+        guard let url = URL(string: urlString) else {
+            throw AuthError.invalidURL
+        }
+        
+        print("[AuthManager] 🗑️ Calling delete-account: \(urlString)")
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 30
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let (data, response) = try await performRequest(request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw AuthError.networkError("無法連接到伺服器")
+        }
+        
+        let statusCode = httpResponse.statusCode
+        let rawBody = String(data: data, encoding: .utf8) ?? "(empty)"
+        print("[AuthManager] 🗑️ delete-account response: \(statusCode) — \(rawBody.prefix(500))")
+        
+        guard (200...299).contains(statusCode) else {
+            let errorMsg: String
+            if statusCode == 404 {
+                errorMsg = "刪除帳號服務尚未啟用，請聯繫開發者部署 Edge Function"
+            } else {
+                errorMsg = parseDeleteAccountError(from: data)
+            }
+            throw AuthError.serverError(statusCode, errorMsg)
+        }
+    }
+    
+    private func parseDeleteAccountError(from data: Data) -> String {
+        struct ErrBody: Codable {
+            let error: String?
+            let detail: String?
+        }
+        if let body = try? decoder.decode(ErrBody.self, from: data) {
+            if let d = body.detail, !d.isEmpty { return d }
+            if let e = body.error, !e.isEmpty { return e }
+        }
+        let raw = String(data: data, encoding: .utf8) ?? ""
+        if !raw.isEmpty && raw.count < 200 { return raw }
+        return "無法刪除帳號，請稍後再試"
     }
     
     // MARK: - Token Refresh
@@ -616,7 +780,7 @@ final class AuthManager {
             return "Email 格式不正確"
         } else if lower.contains("password") && lower.contains("least") {
             return "密碼長度不足"
-        } else if lower.contains("rate limit") || lower.contains("too many requests") {
+        } else if lower.contains("rate limit") || lower.contains("too many requests") || lower.contains("security purposes") {
             return "操作太頻繁，請稍後再試"
         } else if lower.contains("otp_expired") || lower.contains("expired") {
             return "驗證碼已過期，請重新發送"

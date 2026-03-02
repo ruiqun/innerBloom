@@ -15,10 +15,11 @@ private enum LoginMode {
     case password  // Email + 密碼
 }
 
-/// 登入流程步驟（OTP 模式）
+/// 登入流程步驟（OTP 模式 / 註冊驗證）
 private enum OTPStep {
     case enterEmail   // 輸入 Email
-    case enterCode    // 輸入驗證碼
+    case enterCode    // 輸入驗證碼（OTP 登入）
+    case signUpVerify // 輸入驗證碼（註冊確認）
 }
 
 struct LoginView: View {
@@ -38,6 +39,8 @@ struct LoginView: View {
     @State private var errorText: String = ""
     @State private var showCodeSentToast: Bool = false
     @State private var showSignUpSuccessToast: Bool = false
+    @State private var resendCooldown: Int = 0
+    @State private var resendTimer: Timer?
     
     /// 動畫用
     @State private var logoScale: CGFloat = 0.8
@@ -215,28 +218,75 @@ struct LoginView: View {
     
     private var passwordFormSection: some View {
         VStack(spacing: 16) {
-            // Email 輸入
-            LoginTextField(
-                icon: "envelope",
-                placeholder: String.localized(.enterEmail),
-                text: $email,
-                keyboardType: .emailAddress,
-                isEnabled: true
-            )
-            
-            // 密碼輸入
-            LoginSecureField(
-                icon: "lock",
-                placeholder: String.localized(.enterPassword),
-                text: $password
-            )
-            
-            if isSignUpMode {
-                Text(String.localized(.passwordMinLength))
-                    .font(.system(size: 11))
-                    .foregroundColor(Theme.textSecondary.opacity(0.6))
+            if otpStep == .signUpVerify {
+                // 註冊後驗證碼輸入
+                LoginTextField(
+                    icon: "envelope",
+                    placeholder: String.localized(.enterEmail),
+                    text: $email,
+                    keyboardType: .emailAddress,
+                    isEnabled: false
+                )
+                
+                LoginTextField(
+                    icon: "lock.shield",
+                    placeholder: String.localized(.enterVerificationCode),
+                    text: $otpCode,
+                    keyboardType: .numberPad,
+                    isEnabled: true
+                )
+                
+                Text(String.localized(.signUpVerifyHint))
+                    .font(.system(size: 12))
+                    .foregroundColor(Theme.textSecondary.opacity(0.7))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.leading, 4)
+                
+                HStack {
+                    Button(action: {
+                        withAnimation { otpStep = .enterEmail }
+                        otpCode = ""
+                        stopResendTimer()
+                    }) {
+                        Text("< " + String.localized(.backToSignUp))
+                            .font(.system(size: 13))
+                            .foregroundColor(Theme.accent)
+                    }
+                    
+                    Spacer()
+                    
+                    Button(action: resendVerificationCode) {
+                        Text(resendCooldown > 0
+                             ? String.localized(.resendCodeCountdown, args: "\(resendCooldown)")
+                             : String.localized(.resendCode))
+                            .font(.system(size: 13))
+                            .foregroundColor(resendCooldown > 0 ? Theme.textSecondary.opacity(0.4) : Theme.accent)
+                    }
+                    .disabled(resendCooldown > 0 || authManager.isLoading)
+                }
+            } else {
+                // Email + 密碼輸入
+                LoginTextField(
+                    icon: "envelope",
+                    placeholder: String.localized(.enterEmail),
+                    text: $email,
+                    keyboardType: .emailAddress,
+                    isEnabled: true
+                )
+                
+                LoginSecureField(
+                    icon: "lock",
+                    placeholder: String.localized(.enterPassword),
+                    text: $password
+                )
+                
+                if isSignUpMode {
+                    Text(String.localized(.passwordMinLength))
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.textSecondary.opacity(0.6))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, 4)
+                }
             }
         }
     }
@@ -279,6 +329,9 @@ struct LoginView: View {
                     ? String.localized(.sendingCode)
                     : String.localized(.verifying)
             case .password:
+                if otpStep == .signUpVerify {
+                    return String.localized(.verifying)
+                }
                 return isSignUpMode
                     ? String.localized(.signingUp)
                     : String.localized(.loggingIn)
@@ -291,6 +344,9 @@ struct LoginView: View {
                 ? String.localized(.sendVerificationCode)
                 : String.localized(.verifyAndLogin)
         case .password:
+            if otpStep == .signUpVerify {
+                return String.localized(.verifyAndSignUp)
+            }
             return isSignUpMode
                 ? String.localized(.signUp)
                 : String.localized(.signIn)
@@ -307,6 +363,9 @@ struct LoginView: View {
                 return !otpCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
         case .password:
+            if otpStep == .signUpVerify {
+                return !otpCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
             return !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 && !password.isEmpty
         }
@@ -339,9 +398,12 @@ struct LoginView: View {
                     withAnimation(.easeInOut(duration: 0.3)) {
                         if loginMode == .otp {
                             loginMode = .password
+                            otpStep = .enterEmail
+                            otpCode = ""
                         } else {
                             loginMode = .otp
                             otpStep = .enterEmail
+                            otpCode = ""
                         }
                     }
                 }) {
@@ -359,8 +421,8 @@ struct LoginView: View {
                 }
             }
             
-            // 註冊/登入切換（僅密碼模式）
-            if loginMode == .password {
+            // 註冊/登入切換（僅密碼模式且不在驗證碼步驟）
+            if loginMode == .password && otpStep != .signUpVerify {
                 Button(action: {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         isSignUpMode.toggle()
@@ -515,19 +577,42 @@ struct LoginView: View {
                     }
                     
                 case .password:
-                    if isSignUpMode {
-                        // 註冊
-                        try await authManager.signUp(email: email, password: password)
-                        // 註冊成功但未自動登入 → 切到登入頁
-                        if authManager.authState != .authenticated {
-                            withAnimation(.easeInOut(duration: 0.3)) {
-                                isSignUpMode = false
-                                showSignUpSuccessToast = true
+                    if otpStep == .signUpVerify {
+                        // 驗證碼確認 → 用 OTP 驗證（type=email）確認信箱並登入
+                        try await authManager.verifyOTP(email: email, otp: otpCode)
+                    } else if isSignUpMode {
+                        // 1) 建立帳號（限流 = 帳號可能已存在，不視為失敗）
+                        do {
+                            try await authManager.signUp(email: email, password: password)
+                        } catch {
+                            let msg = error.localizedDescription
+                            let isRateLimit = msg.contains("操作太頻繁")
+                                || msg.lowercased().contains("rate limit")
+                                || msg.lowercased().contains("security purposes")
+                                || msg.lowercased().contains("too many requests")
+                            let isAlreadyRegistered = msg.contains("已註冊")
+                                || msg.lowercased().contains("already registered")
+                            if !isRateLimit && !isAlreadyRegistered {
+                                throw error
                             }
+                            print("[LoginView] signUp non-fatal: \(msg)")
+                        }
+                        // 2) 嘗試發送 OTP；限流則靜默跳過
+                        var otpSent = false
+                        do {
+                            try await authManager.sendOTP(to: email)
+                            otpSent = true
+                        } catch {
+                            print("[LoginView] sendOTP rate-limited, will rely on resend: \(error.localizedDescription)")
+                        }
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            otpStep = .signUpVerify
+                            if otpSent { showCodeSentToast = true }
+                        }
+                        startResendCooldown()
+                        if otpSent {
                             DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                                withAnimation {
-                                    showSignUpSuccessToast = false
-                                }
+                                withAnimation { showCodeSentToast = false }
                             }
                         }
                     } else {
@@ -537,16 +622,12 @@ struct LoginView: View {
                 }
             } catch {
                 let msg = error.localizedDescription
-                // "User already registered" → 自動切到登入頁
-                if msg.lowercased().contains("already registered") {
+                if msg.lowercased().contains("already registered") || msg.contains("已註冊") {
+                    errorText = String.localized(.userAlreadyRegistered)
+                    showError = true
                     withAnimation(.easeInOut(duration: 0.3)) {
                         isSignUpMode = false
-                        showSignUpSuccessToast = true
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                        withAnimation {
-                            showSignUpSuccessToast = false
-                        }
+                        otpStep = .enterEmail
                     }
                 } else {
                     errorText = msg
@@ -554,6 +635,42 @@ struct LoginView: View {
                 }
             }
         }
+    }
+    
+    /// 重新發送註冊驗證碼（復用 sendOTP 路徑）
+    private func resendVerificationCode() {
+        Task { @MainActor in
+            do {
+                try await authManager.sendOTP(to: email)
+                startResendCooldown()
+                withAnimation { showCodeSentToast = true }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    withAnimation { showCodeSentToast = false }
+                }
+            } catch {
+                errorText = error.localizedDescription
+                showError = true
+            }
+        }
+    }
+    
+    private func startResendCooldown() {
+        resendCooldown = 60
+        stopResendTimer()
+        resendTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+            Task { @MainActor in
+                if resendCooldown > 0 {
+                    resendCooldown -= 1
+                } else {
+                    stopResendTimer()
+                }
+            }
+        }
+    }
+    
+    private func stopResendTimer() {
+        resendTimer?.invalidate()
+        resendTimer = nil
     }
 }
 
