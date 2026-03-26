@@ -121,10 +121,7 @@ final class IAPManager {
     
     private func monthlyEquivalent(from yearlyProduct: Product) -> String? {
         let monthly = yearlyProduct.price / Decimal(12)
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        formatter.locale = Locale.current
-        return formatter.string(from: monthly as NSDecimalNumber)
+        return monthly.formatted(yearlyProduct.priceFormatStyle)
     }
     
     // MARK: - B-024 + B-033: 同步 Premium 狀態（雙軌：帳號 + 本機）

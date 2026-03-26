@@ -15,6 +15,9 @@ struct PremiumView: View {
     @Bindable private var iapManager = IAPManager.shared
     @Bindable private var localization = LocalizationManager.shared
     
+    private let termsOfUseURL = URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!
+    private let privacyPolicyURL = URL(string: "https://sites.google.com/view/innerbloom-assist/privacy-policy%E9%9A%B1%E7%A7%81%E6%AC%8A%E6%94%BF%E7%AD%96?authuser=0")!
+    
     @State private var isPurchasing = false
     @State private var selectedProduct: Product?
     @State private var showError = false
@@ -226,12 +229,15 @@ struct PremiumView: View {
         return Button {
             selectedProduct = product
         } label: {
-            HStack {
+            HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(isYearly ? String.localized(.premiumYearly) : String.localized(.premiumMonthly))
+                    Text(planTitle(for: product))
                         .font(.system(size: 16, weight: .medium))
                         .foregroundColor(Theme.textPrimary)
-                    if let trial = info?.trialText {
+                    Text(planPeriodText(for: product))
+                        .font(.system(size: 13))
+                        .foregroundColor(Theme.textSecondary)
+                    if let trial = introductoryOfferText(for: product) {
                         Text(trial)
                             .font(.system(size: 12))
                             .foregroundColor(Theme.accent)
@@ -243,9 +249,14 @@ struct PremiumView: View {
                     }
                 }
                 Spacer()
-                Text(product.displayPrice)
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(Theme.accent)
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text(product.displayPrice)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(Theme.accent)
+                    Text(priceUnitText(for: product))
+                        .font(.system(size: 13))
+                        .foregroundColor(Theme.textSecondary)
+                }
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 20))
                     .foregroundColor(isSelected ? Theme.accent : Theme.textSecondary)
@@ -301,10 +312,10 @@ struct PremiumView: View {
     
     private var legalSection: some View {
         VStack(spacing: 8) {
-            Link(String.localized(.termsOfService), destination: URL(string: "https://innerbloom.app/terms")!)
+            Link("Terms of Use (EULA)", destination: termsOfUseURL)
                 .font(.system(size: 13))
                 .foregroundColor(Theme.textSecondary)
-            Link(String.localized(.privacyPolicy), destination: URL(string: "https://innerbloom.app/privacy")!)
+            Link("Privacy Policy", destination: privacyPolicyURL)
                 .font(.system(size: 13))
                 .foregroundColor(Theme.textSecondary)
             Text(String.localized(.subscriptionTerms))
@@ -377,6 +388,98 @@ struct PremiumView: View {
         formatter.timeZone = .current
         formatter.locale = Locale.current
         return formatter.string(from: date)
+    }
+    
+    private func planTitle(for product: Product) -> String {
+        if product.id.contains("yearly") {
+            return localization.currentLanguage == .en ? "Premium Yearly" : "Premium 年付"
+        } else {
+            return localization.currentLanguage == .en ? "Premium Monthly" : "Premium 月付"
+        }
+    }
+    
+    private func planPeriodText(for product: Product) -> String {
+        guard let period = product.subscription?.subscriptionPeriod else {
+            return localization.currentLanguage == .en ? "Subscription plan" : "訂閱方案"
+        }
+
+        return localizedPeriodText(value: period.value, unit: period.unit)
+    }
+    
+    private func priceUnitText(for product: Product) -> String {
+        guard let period = product.subscription?.subscriptionPeriod else {
+            return ""
+        }
+
+        switch (localization.currentLanguage, period.unit) {
+        case (.en, .day):
+            return "/day"
+        case (.en, .week):
+            return "/week"
+        case (.en, .month):
+            return "/month"
+        case (.en, .year):
+            return "/year"
+        case (_, .day):
+            return "每天"
+        case (_, .week):
+            return "每週"
+        case (_, .month):
+            return "每月"
+        case (_, .year):
+            return "每年"
+        @unknown default:
+            return ""
+        }
+    }
+
+    private func introductoryOfferText(for product: Product) -> String? {
+        guard let offerPeriod = product.subscription?.introductoryOffer?.period else {
+            return nil
+        }
+
+        switch localization.currentLanguage {
+        case .en:
+            return "\(offerPeriod.value)-\(englishUnitName(for: offerPeriod.unit, plural: false)) free trial"
+        case .zhHant:
+            return "\(localizedPeriodText(value: offerPeriod.value, unit: offerPeriod.unit))免費試用"
+        }
+    }
+
+    private func localizedPeriodText(value: Int, unit: Product.SubscriptionPeriod.Unit) -> String {
+        switch localization.currentLanguage {
+        case .en:
+            let unitText = englishUnitName(for: unit, plural: value > 1)
+            return "\(value) \(unitText)"
+        case .zhHant:
+            switch unit {
+            case .day:
+                return "\(value) 天"
+            case .week:
+                return "\(value) 週"
+            case .month:
+                return "\(value) 個月"
+            case .year:
+                return "\(value) 年"
+            @unknown default:
+                return "訂閱方案"
+            }
+        }
+    }
+
+    private func englishUnitName(for unit: Product.SubscriptionPeriod.Unit, plural: Bool) -> String {
+        switch unit {
+        case .day:
+            return plural ? "days" : "day"
+        case .week:
+            return plural ? "weeks" : "week"
+        case .month:
+            return plural ? "months" : "month"
+        case .year:
+            return plural ? "years" : "year"
+        @unknown default:
+            return plural ? "periods" : "period"
+        }
     }
     
     /// 開啟系統訂閱管理頁面（可切換方案、取消等）

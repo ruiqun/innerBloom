@@ -250,6 +250,8 @@ struct SettingsView: View {
                             .foregroundColor(Theme.textSecondary)
                     }
                     .padding(.vertical, 4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             } else {
@@ -264,6 +266,8 @@ struct SettingsView: View {
                             .foregroundColor(Theme.textSecondary)
                     }
                     .padding(.vertical, 4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
